@@ -312,7 +312,7 @@ class SearchTab(QWidget):
             sudo = False
         elif source == "aur":
             if operation == "install":
-                cmd = ["yay", "-S", "--noconfirm", name]
+                cmd = ["yay", "-S", "--noconfirm", "--answerclean=All", "--answerdiff=None", name]
             else:
                 cmd = ["yay", "-R", "--noconfirm", name]
             sudo = False
@@ -609,7 +609,7 @@ class UpdatesTab(QWidget):
         password = dlg.password()
         self.terminal.append_info("Updating AUR packages via yay")
         self._run_update(
-            ["yay", "-Syu", "--aur", "--noconfirm"],
+            ["yay", "-Syu", "--aur", "--noconfirm", "--answerclean=All", "--answerdiff=None"],
             sudo=False,
             password=password,
             pre_auth=True,
