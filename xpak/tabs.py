@@ -19,7 +19,7 @@ from xpak.dialogs import PasswordDialog
 class SearchTab(QWidget):
     log_message = pyqtSignal(str, str)
 
-    COLUMNS = ["Name", "Version", "Source", "Description"]
+    COLUMNS = ["Name", "Version", "Source", "Votes", "Description"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -60,7 +60,7 @@ class SearchTab(QWidget):
         sort_lbl = QLabel("Sort by:")
         sort_lbl.setStyleSheet("color: #565f89; font-size: 12px;")
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["Relevance", "Name", "Version", "Source"])
+        self.sort_combo.addItems(["Relevance", "Name", "Version", "Source", "Votes"])
         self.sort_combo.currentTextChanged.connect(self._apply_sort)
 
         order_lbl = QLabel("Order:")
@@ -204,6 +204,14 @@ class SearchTab(QWidget):
                 return 3  # description-only match
 
             self._sorted_results = sorted(results, key=_relevance, reverse=descending)
+        elif sort_key == "Votes":
+            def _votes(pkg):
+                try:
+                    return int(pkg.get("votes", "") or 0)
+                except ValueError:
+                    return 0
+
+            self._sorted_results = sorted(results, key=_votes, reverse=not descending)
         else:
             key = sort_key.lower()
             self._sorted_results = sorted(

@@ -186,14 +186,38 @@ class SearchWorker(QThread):
 
     def _search_aur(self) -> list:
         try:
-            out = subprocess.check_output(
-                ["yay", "-Ssa", "--aur", self.query],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            return self._parse_pacman_output(out, "aur")
-        except subprocess.CalledProcessError:
-            return []
+            from urllib.request import urlopen, Request as _Request
+            import json as _json
+            url = f"https://aur.archlinux.org/rpc/v5/search/{self.query}"
+            req = _Request(url, headers={"User-Agent": "xpak"})
+            with urlopen(req, timeout=15) as resp:
+                data = _json.loads(resp.read().decode())
+            installed = self._get_installed_names()
+            results = []
+            for pkg in data.get("results", []):
+                name = pkg.get("Name", "")
+                results.append(
+                    {
+                        "name": name,
+                        "version": pkg.get("Version", ""),
+                        "description": pkg.get("Description", "") or "",
+                        "source": "aur",
+                        "installed": name in installed,
+                        "votes": str(pkg.get("NumVotes", 0)),
+                    }
+                )
+            return results
+        except Exception:
+            # Fallback to yay CLI (votes will be unavailable)
+            try:
+                out = subprocess.check_output(
+                    ["yay", "-Ssa", "--aur", self.query],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+                return self._parse_pacman_output(out, "aur")
+            except subprocess.CalledProcessError:
+                return []
 
     def _search_flatpak(self) -> list:
         try:
@@ -214,6 +238,7 @@ class SearchWorker(QThread):
                             "description": parts[3].strip() if len(parts) > 3 else "",
                             "source": "flatpak",
                             "installed": self._is_flatpak_installed(parts[0].strip()),
+                            "votes": "",
                         }
                     )
             return results
@@ -246,10 +271,21 @@ class SearchWorker(QThread):
                     "source": source,
                     "installed": installed,
                     "repo": repo_name.split("/")[0] if "/" in repo_name else source,
+                    "votes": "",
                 }
             )
             i += 2
         return results
+
+    def _get_installed_names(self) -> set:
+        """Return the set of all installed pacman package names."""
+        try:
+            out = subprocess.check_output(
+                ["pacman", "-Qq"], text=True, stderr=subprocess.DEVNULL
+            )
+            return set(out.strip().splitlines())
+        except Exception:
+            return set()
 
     def _is_flatpak_installed(self, app_id: str) -> bool:
         try:
