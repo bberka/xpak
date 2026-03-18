@@ -27,7 +27,6 @@ QTabBar::tab {
 QTabBar::tab:selected {
     background-color: #1a1b26;
     color: #7aa2f7;
-    border-bottom: 2px solid #7aa2f7;
 }
 
 QTabBar::tab:hover:!selected {
