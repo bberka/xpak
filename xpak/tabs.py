@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QSplitter, QProgressBar,
     QMessageBox, QDialog, QTextEdit, QFrame,
-    QAbstractItemView,
+    QAbstractItemView, QCheckBox,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
@@ -28,6 +28,7 @@ class SearchTab(QWidget):
         self._selected_pkg: dict | None = None
         self._results: list[dict] = []
         self._sorted_results: list[dict] = []
+        self._query: str = ""
         self._build_ui()
 
     def _build_ui(self):
@@ -59,7 +60,7 @@ class SearchTab(QWidget):
         sort_lbl = QLabel("Sort by:")
         sort_lbl.setStyleSheet("color: #565f89; font-size: 12px;")
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["Name", "Version", "Source"])
+        self.sort_combo.addItems(["Relevance", "Name", "Version", "Source"])
         self.sort_combo.currentTextChanged.connect(self._apply_sort)
 
         order_lbl = QLabel("Order:")
@@ -68,10 +69,16 @@ class SearchTab(QWidget):
         self.order_combo.addItems(["Ascending", "Descending"])
         self.order_combo.currentTextChanged.connect(self._apply_sort)
 
+        self.search_desc_check = QCheckBox("Search descriptions")
+        self.search_desc_check.setChecked(False)
+        self.search_desc_check.setStyleSheet("color: #565f89; font-size: 12px; margin-left: 12px;")
+        self.search_desc_check.stateChanged.connect(self._apply_sort)
+
         sort_row.addWidget(sort_lbl)
         sort_row.addWidget(self.sort_combo)
         sort_row.addWidget(order_lbl)
         sort_row.addWidget(self.order_combo)
+        sort_row.addWidget(self.search_desc_check)
         sort_row.addStretch()
         layout.addLayout(sort_row)
 
@@ -142,6 +149,7 @@ class SearchTab(QWidget):
 
         self._results = []
         self._sorted_results = []
+        self._query = query
         self.table.setRowCount(0)
         self.terminal.append_info(f"Searching '{query}' in {', '.join(sources)}")
         self.progress.setVisible(True)
@@ -173,14 +181,36 @@ class SearchTab(QWidget):
         if not self._results:
             return
 
-        sort_key = self.sort_combo.currentText().lower()
+        sort_key = self.sort_combo.currentText()
         descending = self.order_combo.currentText() == "Descending"
+        search_desc = self.search_desc_check.isChecked()
+        query = self._query.lower()
 
-        self._sorted_results = sorted(
-            self._results,
-            key=lambda p: p.get(sort_key, "").lower(),
-            reverse=descending,
-        )
+        # Filter: exclude description-only matches when search descriptions is off
+        if query and not search_desc:
+            results = [p for p in self._results if query in p.get("name", "").lower()]
+        else:
+            results = list(self._results)
+
+        if sort_key == "Relevance":
+            def _relevance(pkg):
+                name = pkg.get("name", "").lower()
+                if name == query:
+                    return 0
+                if name.startswith(query):
+                    return 1
+                if query in name:
+                    return 2
+                return 3  # description-only match
+
+            self._sorted_results = sorted(results, key=_relevance, reverse=descending)
+        else:
+            key = sort_key.lower()
+            self._sorted_results = sorted(
+                results,
+                key=lambda p: p.get(key, "").lower(),
+                reverse=descending,
+            )
         self.table.populate(self._sorted_results, self.COLUMNS)
 
     def _on_selection(self):
