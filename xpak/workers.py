@@ -107,6 +107,7 @@ class CommandWorker(QThread):
                     env=env,
                 )
 
+            checksum_failed = False
             for line in iter(self._process.stdout.readline, ""):
                 if self._abort:
                     self._process.terminate()
@@ -114,15 +115,24 @@ class CommandWorker(QThread):
                     return
                 line = line.rstrip()
                 if line:
+                    if "did not pass the validity check" in line:
+                        checksum_failed = True
                     self.output_line.emit(line)
 
             self._process.wait()
             success = self._process.returncode == 0
-            msg = (
-                "Operation completed successfully"
-                if success
-                else f"Operation failed (exit {self._process.returncode})"
-            )
+            if not success and checksum_failed:
+                msg = (
+                    "Checksum verification failed — the AUR package's checksums don't match "
+                    "the downloaded files. This is an upstream PKGBUILD issue. "
+                    "Check AUR comments for navicat-premium-lite for status or a workaround."
+                )
+            else:
+                msg = (
+                    "Operation completed successfully"
+                    if success
+                    else f"Operation failed (exit {self._process.returncode})"
+                )
             self.finished.emit(success, msg)
 
         except FileNotFoundError as e:
