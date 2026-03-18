@@ -13,7 +13,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(1000, 700)
+        self.setMinimumSize(1000, 800)
         self.resize(1200, 800)
         self._build_ui()
         self._build_statusbar()
