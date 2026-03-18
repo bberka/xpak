@@ -1,5 +1,7 @@
 # XPAK
 
+> **Disclaimer:** This is a work-in-progress application and may not be fully functional. Parts of the code are AI-generated. Use at your own risk.
+
 A GUI package manager for Arch Linux and CachyOS with KDE Plasma. Built with Python and PyQt6.
 
 Supports pacman (official repos), yay (AUR), and Flatpak — all from a single dark-themed interface.
