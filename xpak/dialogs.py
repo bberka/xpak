@@ -1,0 +1,258 @@
+import shutil
+import subprocess
+
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QDialogButtonBox, QPushButton, QCheckBox, QFrame, QScrollArea,
+    QWidget, QProgressBar, QMessageBox,
+)
+from PyQt6.QtCore import Qt, QSettings
+
+from xpak.workers import CommandWorker
+from xpak.widgets import TerminalOutput
+
+
+class PasswordDialog(QDialog):
+    def __init__(self, parent=None, message: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle("Authentication Required")
+        self.setMinimumWidth(380)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        icon_label = QLabel("  sudo password required")
+        icon_label.setStyleSheet("color: #e0af68; font-weight: 700; font-size: 14px;")
+        layout.addWidget(icon_label)
+
+        if message:
+            msg_label = QLabel(message)
+            msg_label.setWordWrap(True)
+            msg_label.setStyleSheet("color: #a9b1d6; font-size: 12px;")
+            layout.addWidget(msg_label)
+
+        self.pwd_input = QLineEdit()
+        self.pwd_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.pwd_input.setPlaceholderText("Enter sudo password...")
+        layout.addWidget(self.pwd_input)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.pwd_input.returnPressed.connect(self.accept)
+
+    def password(self) -> str:
+        return self.pwd_input.text()
+
+
+class ToolCheckDialog(QDialog):
+    """Startup dialog that checks for required tools and offers to install them."""
+
+    SETTINGS_KEY = "tool_check_dismissed"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("XPAK - Tool Check")
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(480)
+        self._worker: CommandWorker | None = None
+        self._build_ui()
+        self._check_tools()
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setSpacing(12)
+        outer.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Tool Availability Check")
+        title.setStyleSheet("color: #7aa2f7; font-size: 16px; font-weight: 800;")
+        outer.addWidget(title)
+
+        sub = QLabel(
+            "XPAK requires the following tools for full functionality. "
+            "Items marked below are not currently installed."
+        )
+        sub.setWordWrap(True)
+        sub.setStyleSheet("color: #565f89; font-size: 12px; margin-bottom: 8px;")
+        outer.addWidget(sub)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        scroll_content = QWidget()
+        self._cards_layout = QVBoxLayout(scroll_content)
+        self._cards_layout.setSpacing(10)
+        self._cards_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_area.setWidget(scroll_content)
+        outer.addWidget(scroll_area)
+
+        self._terminal = TerminalOutput()
+        self._terminal.setMaximumHeight(120)
+        self._terminal.setVisible(False)
+        outer.addWidget(self._terminal)
+
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)
+        self._progress.setVisible(False)
+        self._progress.setFixedHeight(6)
+        outer.addWidget(self._progress)
+
+        bottom_row = QHBoxLayout()
+        self._dismiss_check = QCheckBox("Don't show this again")
+        self._dismiss_check.setStyleSheet("color: #565f89; font-size: 12px;")
+        bottom_row.addWidget(self._dismiss_check)
+        bottom_row.addStretch()
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self._on_close)
+        bottom_row.addWidget(close_btn)
+        outer.addLayout(bottom_row)
+
+    def _check_tools(self):
+        tools = [
+            {
+                "id": "yay",
+                "name": "yay",
+                "description": "AUR helper. Required for searching and installing AUR packages.",
+                "installable": False,
+                "install_cmd": None,
+                "instructions": (
+                    "yay must be installed manually from the AUR:\n"
+                    "  git clone https://aur.archlinux.org/yay.git\n"
+                    "  cd yay && makepkg -si"
+                ),
+            },
+            {
+                "id": "flatpak",
+                "name": "flatpak",
+                "description": "Flatpak runtime. Required for Flatpak package support.",
+                "installable": True,
+                "install_cmd": ["pacman", "-S", "--noconfirm", "flatpak"],
+                "instructions": None,
+            },
+            {
+                "id": "pacman-contrib",
+                "name": "pacman-contrib",
+                "description": (
+                    "Provides checkupdates (safe update checking) and paccache (cache cleanup). "
+                    "Required for the Updates tab and cache cleaning."
+                ),
+                "installable": True,
+                "install_cmd": ["pacman", "-S", "--noconfirm", "pacman-contrib"],
+                "instructions": None,
+            },
+        ]
+
+        for tool in tools:
+            cmd = tool["id"]
+            # pacman-contrib provides commands, check by package name via pacman -Q
+            if tool["id"] == "pacman-contrib":
+                found = self._is_pkg_installed("pacman-contrib")
+            else:
+                found = shutil.which(cmd) is not None
+            self._add_tool_card(tool, found)
+
+    def _is_pkg_installed(self, pkg_name: str) -> bool:
+        try:
+            subprocess.run(
+                ["pacman", "-Q", pkg_name],
+                check=True,
+                capture_output=True,
+            )
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+
+    def _add_tool_card(self, tool: dict, found: bool):
+        card = QFrame()
+        card.setObjectName("sidebar-card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setSpacing(6)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+
+        header_row = QHBoxLayout()
+        status_icon = "✓" if found else "✗"
+        status_color = "#9ece6a" if found else "#f7768e"
+        name_lbl = QLabel(f"{status_icon}  {tool['name']}")
+        name_lbl.setStyleSheet(f"color: {status_color}; font-weight: 700; font-size: 13px;")
+        header_row.addWidget(name_lbl)
+        header_row.addStretch()
+
+        if not found:
+            if tool["installable"]:
+                install_btn = QPushButton("Install via pacman")
+                install_btn.setObjectName("primary")
+                install_btn.setFixedWidth(150)
+                install_btn.clicked.connect(
+                    lambda checked, t=tool: self._install_tool(t)
+                )
+                header_row.addWidget(install_btn)
+            else:
+                manual_lbl = QLabel("Manual install required")
+                manual_lbl.setStyleSheet("color: #e0af68; font-size: 11px; font-weight: 600;")
+                header_row.addWidget(manual_lbl)
+
+        card_layout.addLayout(header_row)
+
+        desc_lbl = QLabel(tool["description"])
+        desc_lbl.setWordWrap(True)
+        desc_lbl.setStyleSheet("color: #565f89; font-size: 11px;")
+        card_layout.addWidget(desc_lbl)
+
+        if not found and tool["instructions"]:
+            instr_lbl = QLabel(tool["instructions"])
+            instr_lbl.setWordWrap(True)
+            instr_lbl.setStyleSheet(
+                "color: #a9b1d6; font-size: 11px; font-family: monospace; "
+                "background-color: #0d0e14; padding: 8px; border-radius: 4px;"
+            )
+            card_layout.addWidget(instr_lbl)
+
+        self._cards_layout.addWidget(card)
+
+    def _install_tool(self, tool: dict):
+        dlg = PasswordDialog(
+            self,
+            message=f"Installing {tool['name']} via pacman requires sudo.",
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        password = dlg.password()
+
+        self._terminal.setVisible(True)
+        self._progress.setVisible(True)
+        self._terminal.append_info(f"Installing {tool['name']}...")
+
+        self._worker = CommandWorker(
+            tool["install_cmd"],
+            sudo=True,
+            password=password,
+        )
+        self._worker.output_line.connect(self._terminal.append_line)
+        self._worker.finished.connect(self._on_install_done)
+        self._worker.start()
+
+    def _on_install_done(self, success: bool, msg: str):
+        self._progress.setVisible(False)
+        if success:
+            self._terminal.append_success(msg)
+            self._terminal.append_info("Please restart XPAK to apply changes.")
+        else:
+            self._terminal.append_error(msg)
+
+    def _on_close(self):
+        if self._dismiss_check.isChecked():
+            settings = QSettings("xpak", "xpak")
+            settings.setValue(self.SETTINGS_KEY, True)
+        self.accept()
+
+    @staticmethod
+    def should_show() -> bool:
+        settings = QSettings("xpak", "xpak")
+        dismissed = settings.value("tool_check_dismissed", False, type=bool)
+        return not dismissed
