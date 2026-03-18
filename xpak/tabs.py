@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from xpak.workers import (
     CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker
 )
-from xpak.widgets import TerminalOutput, PackageTable, SourceSelector
+from xpak.widgets import TerminalOutput, TerminalPanel, PackageTable, SourceSelector
 from xpak.dialogs import PasswordDialog
 
 
@@ -113,8 +113,7 @@ class SearchTab(QWidget):
         action_row.addWidget(self.status_label)
         bottom_layout.addLayout(action_row)
 
-        self.terminal = TerminalOutput()
-        self.terminal.setMaximumHeight(200)
+        self.terminal = TerminalPanel(max_height=200)
         bottom_layout.addWidget(self.terminal)
 
         splitter.addWidget(bottom)
@@ -313,8 +312,10 @@ class SearchTab(QWidget):
         self._worker.output_line.connect(self.terminal.append_line)
         self._worker.finished.connect(self._on_op_finished)
         self._worker.start()
+        self.terminal.set_worker(self._worker)
 
     def _on_op_finished(self, success: bool, msg: str):
+        self.terminal.set_worker(None)
         self.progress.setVisible(False)
         if success:
             self.terminal.append_success(msg)
@@ -378,8 +379,7 @@ class InstalledTab(QWidget):
         self.progress.setFixedHeight(6)
         layout.addWidget(self.progress)
 
-        self.terminal = TerminalOutput()
-        self.terminal.setMaximumHeight(160)
+        self.terminal = TerminalPanel(max_height=160)
         layout.addWidget(self.terminal)
 
     def load_packages(self):
@@ -453,8 +453,10 @@ class InstalledTab(QWidget):
         self._worker.output_line.connect(self.terminal.append_line)
         self._worker.finished.connect(self._on_remove_done)
         self._worker.start()
+        self.terminal.set_worker(self._worker)
 
     def _on_remove_done(self, success: bool, msg: str):
+        self.terminal.set_worker(None)
         self.progress.setVisible(False)
         if success:
             self.terminal.append_success(msg)
@@ -517,8 +519,7 @@ class UpdatesTab(QWidget):
         self.progress.setFixedHeight(6)
         layout.addWidget(self.progress)
 
-        self.terminal = TerminalOutput()
-        self.terminal.setMaximumHeight(200)
+        self.terminal = TerminalPanel(max_height=200)
         layout.addWidget(self.terminal)
 
     def check_updates(self):
@@ -583,8 +584,10 @@ class UpdatesTab(QWidget):
         self._worker.output_line.connect(self.terminal.append_line)
         self._worker.finished.connect(self._on_update_done)
         self._worker.start()
+        self.terminal.set_worker(self._worker)
 
     def _on_update_done(self, success: bool, msg: str):
+        self.terminal.set_worker(None)
         self.progress.setVisible(False)
         if success:
             self.terminal.append_success(msg)
@@ -709,8 +712,7 @@ class ToolsTab(QWidget):
         layout.addLayout(grid)
         layout.addStretch()
 
-        self.terminal = TerminalOutput()
-        self.terminal.setMaximumHeight(200)
+        self.terminal = TerminalPanel(max_height=200)
         layout.addWidget(self.terminal)
 
         self.progress = QProgressBar()
@@ -763,8 +765,10 @@ class ToolsTab(QWidget):
         self._worker.output_line.connect(self.terminal.append_line)
         self._worker.finished.connect(self._on_done)
         self._worker.start()
+        self.terminal.set_worker(self._worker)
 
     def _on_done(self, success: bool, msg: str):
+        self.terminal.set_worker(None)
         self.progress.setVisible(False)
         if success:
             self.terminal.append_success(msg)

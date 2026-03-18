@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QPushButton, QMenu,
+    QAbstractItemView, QPushButton, QMenu, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QTextCursor, QAction
@@ -33,6 +33,70 @@ class TerminalOutput(QTextEdit):
     @staticmethod
     def _escape(text: str) -> str:
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+class TerminalPanel(QWidget):
+    """TerminalOutput with a persistent input bar for interactive processes."""
+
+    def __init__(self, max_height: int = 200, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self._terminal = TerminalOutput()
+        self._terminal.setMaximumHeight(max_height)
+        layout.addWidget(self._terminal)
+
+        input_row = QHBoxLayout()
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("Send input to process...")
+        self._input.setEnabled(False)
+        self._input.returnPressed.connect(self._send)
+
+        self._btn = QPushButton("Send")
+        self._btn.setFixedWidth(60)
+        self._btn.setEnabled(False)
+        self._btn.clicked.connect(self._send)
+
+        input_row.addWidget(self._input)
+        input_row.addWidget(self._btn)
+        layout.addLayout(input_row)
+
+        self._worker = None
+
+    # Proxy terminal methods so existing code works unchanged
+    def append_line(self, line: str, color: str = "#a9b1d6"):
+        self._terminal.append_line(line, color)
+
+    def append_success(self, msg: str):
+        self._terminal.append_success(msg)
+
+    def append_error(self, msg: str):
+        self._terminal.append_error(msg)
+
+    def append_info(self, msg: str):
+        self._terminal.append_info(msg)
+
+    def clear_log(self):
+        self._terminal.clear_log()
+
+    def set_worker(self, worker):
+        """Call with a running CommandWorker to enable input, or None to disable."""
+        self._worker = worker
+        enabled = worker is not None
+        self._input.setEnabled(enabled)
+        self._btn.setEnabled(enabled)
+        if enabled:
+            self._input.setFocus()
+
+    def _send(self):
+        text = self._input.text().strip()
+        if not text or not self._worker:
+            return
+        self._worker.send_input(text)
+        self._terminal.append_line(f"> {text}", "#565f89")
+        self._input.clear()
 
 
 class PackageTable(QTableWidget):

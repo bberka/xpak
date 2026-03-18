@@ -1,6 +1,9 @@
+import os
 import subprocess
 import shutil
 import json
+import tempfile
+import shlex
 import concurrent.futures
 from urllib.request import urlopen, Request
 from urllib.error import URLError
@@ -27,6 +30,16 @@ def _pre_auth_sudo(password: str) -> bool:
         return False
 
 
+def _create_askpass_helper(password: str) -> str:
+    """Create a temporary sudo askpass helper script that outputs the password.
+    Returns the path to the script. Caller is responsible for deleting it."""
+    fd, path = tempfile.mkstemp(suffix=".sh", prefix="xpak_askpass_")
+    with os.fdopen(fd, "w") as f:
+        f.write(f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(password)}\n")
+    os.chmod(path, 0o700)
+    return path
+
+
 class CommandWorker(QThread):
     output_line = pyqtSignal(str)
     finished = pyqtSignal(bool, str)
@@ -39,22 +52,41 @@ class CommandWorker(QThread):
         self.password = password
         self.pre_auth = pre_auth
         self._abort = False
+        self._process = None
 
     def abort(self):
         self._abort = True
+        if self._process:
+            self._process.terminate()
+
+    def send_input(self, text: str):
+        """Send a line of text to the running process's stdin."""
+        if self._process and self._process.stdin and not self._process.stdin.closed:
+            try:
+                self._process.stdin.write(text + "\n")
+                self._process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                pass
 
     def run(self):
+        askpass_path = None
         try:
-            # For AUR (yay) operations: pre-authenticate sudo so yay can call sudo internally
+            env = None
+
+            # For AUR (yay) operations: pre-authenticate sudo and set up SUDO_ASKPASS
+            # so yay's internal sudo calls (e.g. installing sync deps) work without a TTY.
             if self.pre_auth and self.password:
                 ok = _pre_auth_sudo(self.password)
                 if not ok:
                     self.finished.emit(False, "sudo authentication failed")
                     return
+                askpass_path = _create_askpass_helper(self.password)
+                env = os.environ.copy()
+                env["SUDO_ASKPASS"] = askpass_path
 
             if self.sudo and self.password:
                 full_cmd = ["sudo", "-S"] + self.cmd
-                process = subprocess.Popen(
+                self._process = subprocess.Popen(
                     full_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -62,33 +94,34 @@ class CommandWorker(QThread):
                     text=True,
                     bufsize=1,
                 )
-                process.stdin.write(self.password + "\n")
-                process.stdin.flush()
+                self._process.stdin.write(self.password + "\n")
+                self._process.stdin.flush()
             else:
-                process = subprocess.Popen(
+                self._process = subprocess.Popen(
                     self.cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
                     text=True,
                     bufsize=1,
+                    env=env,
                 )
 
-            for line in iter(process.stdout.readline, ""):
+            for line in iter(self._process.stdout.readline, ""):
                 if self._abort:
-                    process.terminate()
+                    self._process.terminate()
                     self.finished.emit(False, "Operation aborted")
                     return
                 line = line.rstrip()
                 if line:
                     self.output_line.emit(line)
 
-            process.wait()
-            success = process.returncode == 0
+            self._process.wait()
+            success = self._process.returncode == 0
             msg = (
                 "Operation completed successfully"
                 if success
-                else f"Operation failed (exit {process.returncode})"
+                else f"Operation failed (exit {self._process.returncode})"
             )
             self.finished.emit(success, msg)
 
@@ -96,6 +129,12 @@ class CommandWorker(QThread):
             self.finished.emit(False, f"Command not found: {e}")
         except Exception as e:
             self.finished.emit(False, str(e))
+        finally:
+            if askpass_path:
+                try:
+                    os.unlink(askpass_path)
+                except OSError:
+                    pass
 
 
 class SearchWorker(QThread):
