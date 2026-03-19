@@ -1,15 +1,17 @@
 import subprocess
 import shutil
+import sys
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QSplitter, QProgressBar,
-    QMessageBox, QDialog, QTextEdit, QFrame,
+    QMessageBox, QDialog, QTextEdit, QFrame, QApplication,
     QAbstractItemView, QCheckBox, QScrollArea,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QUrl
 from PyQt6.QtGui import QDesktopServices
 
+from xpak import APP_ENTRYPOINT, APP_ROOT, INSTALL_SCRIPT
 from xpak.workers import (
     CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker
 )
@@ -786,6 +788,8 @@ class ToolsTab(QWidget):
         super().__init__(parent)
         self._worker: CommandWorker | None = None
         self._app_update_checker: AppUpdateChecker | None = None
+        self._pending_app_update_version: str | None = None
+        self._pending_app_update_url: str | None = None
         self._action_buttons: list[QPushButton] = []
         self._build_ui()
 
@@ -805,10 +809,12 @@ class ToolsTab(QWidget):
 
     def set_operation_controls_enabled(self, enabled: bool):
         worker_busy = self._worker is not None and self._worker.isRunning()
+        checker_busy = self._app_update_checker is not None and self._app_update_checker.isRunning()
         for btn in self._action_buttons:
             btn.setEnabled(enabled and not worker_busy)
-        self.check_app_update_btn.setEnabled(
-            enabled and not (self._app_update_checker is not None and self._app_update_checker.isRunning())
+        self.check_app_update_btn.setEnabled(enabled and not worker_busy and not checker_busy)
+        self.update_app_btn.setEnabled(
+            enabled and not worker_busy and not checker_busy and self.update_app_btn.isVisible()
         )
         if hasattr(self, "open_log_folder_btn"):
             self.open_log_folder_btn.setEnabled(enabled)
@@ -838,6 +844,12 @@ class ToolsTab(QWidget):
         self.check_app_update_btn = QPushButton("Check for App Update")
         self.check_app_update_btn.clicked.connect(self.check_app_update)
         app_update_row.addWidget(self.check_app_update_btn)
+
+        self.update_app_btn = QPushButton("Update Now")
+        self.update_app_btn.setObjectName("primary")
+        self.update_app_btn.setVisible(False)
+        self.update_app_btn.clicked.connect(self.update_app)
+        app_update_row.addWidget(self.update_app_btn)
 
         self.app_update_status = QLabel("")
         self.app_update_status.setStyleSheet("color: #565f89; font-size: 12px; margin-left: 12px;")
@@ -972,6 +984,9 @@ class ToolsTab(QWidget):
 
     def check_app_update(self):
         self.check_app_update_btn.setEnabled(False)
+        self._pending_app_update_version = None
+        self._pending_app_update_url = None
+        self.update_app_btn.setVisible(False)
         self.app_update_status.setText("Checking...")
         self.app_update_status.setStyleSheet("color: #565f89; font-size: 12px;")
 
@@ -992,21 +1007,121 @@ class ToolsTab(QWidget):
             self.terminal.append_error(f"Could not open log folder: {log_dir}")
 
     def _on_update_available(self, version: str, url: str):
+        self._pending_app_update_version = version
+        self._pending_app_update_url = url
         self.app_update_status.setText(f"Update available: v{version}")
         self.app_update_status.setStyleSheet("color: #e0af68; font-weight: 700; font-size: 12px;")
+        self.update_app_btn.setText(f"Update to v{version}")
+        self.update_app_btn.setVisible(True)
+        self.update_app_btn.setEnabled(True)
         self.terminal.append_info(f"New version available: v{version}")
         self.terminal.append_info(f"Download: {url}")
-        self.terminal.append_info("Run install.sh or: cd ~/.local/lib/xpak && git pull")
+        self.terminal.append_info("Use the update button to install and restart automatically.")
 
     def _on_no_update(self):
+        self._pending_app_update_version = None
+        self._pending_app_update_url = None
+        self.update_app_btn.setVisible(False)
         self.app_update_status.setText("Up to date")
         self.app_update_status.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
         self.terminal.append_success("XPAK is up to date")
 
     def _on_update_check_error(self, msg: str):
+        self._pending_app_update_version = None
+        self._pending_app_update_url = None
+        self.update_app_btn.setVisible(False)
         self.app_update_status.setText("Check failed")
         self.app_update_status.setStyleSheet("color: #f7768e; font-size: 12px;")
         self.terminal.append_error(f"Update check failed: {msg}")
+
+    def update_app(self):
+        version = self._pending_app_update_version
+        if not version:
+            self.terminal.append_error("No pending app update found. Check for updates again.")
+            return
+
+        if not INSTALL_SCRIPT.is_file():
+            self.terminal.append_error(f"Could not find installer script: {INSTALL_SCRIPT}")
+            self.app_update_status.setText("Install script missing")
+            self.app_update_status.setStyleSheet("color: #f7768e; font-size: 12px;")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Update XPAK",
+            (
+                f"Install XPAK v{version} now?\n\n"
+                "The app will update itself, then restart automatically."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        if not self._begin_operation("Updating XPAK"):
+            return
+
+        self.progress.setVisible(True)
+        self.update_app_btn.setEnabled(False)
+        self.check_app_update_btn.setEnabled(False)
+        self.app_update_status.setText(f"Updating to v{version}...")
+        self.app_update_status.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 12px;")
+        self.terminal.append_info(f"Starting self-update to v{version}")
+
+        self._worker = CommandWorker(
+            ["bash", str(INSTALL_SCRIPT)],
+            sudo=False,
+            log_name="maintenance:self-update",
+        )
+        self._worker.output_line.connect(self.terminal.append_line)
+        self._worker.finished.connect(self._on_app_update_done)
+        self._worker.start()
+        self.terminal.set_worker(self._worker)
+
+    def _on_app_update_done(self, success: bool, msg: str):
+        self.terminal.set_worker(None)
+        self.progress.setVisible(False)
+        self._end_operation()
+
+        if success:
+            version = self._pending_app_update_version or "latest version"
+            self.app_update_status.setText(f"Updated to v{version}. Restarting...")
+            self.app_update_status.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
+            self.terminal.append_success("Update installed successfully")
+            self.terminal.append_info("Restarting XPAK...")
+            self._restart_application()
+            return
+
+        self.app_update_status.setText("Update failed")
+        self.app_update_status.setStyleSheet("color: #f7768e; font-size: 12px;")
+        self.update_app_btn.setEnabled(True)
+        self.terminal.append_error(msg)
+        self.set_operation_controls_enabled(True)
+
+    def _restart_application(self):
+        if not APP_ENTRYPOINT.is_file():
+            self.terminal.append_error(f"Could not restart automatically: missing {APP_ENTRYPOINT}")
+            self.app_update_status.setText("Updated, restart manually")
+            self.app_update_status.setStyleSheet("color: #e0af68; font-weight: 700; font-size: 12px;")
+            self.set_operation_controls_enabled(True)
+            return
+
+        try:
+            subprocess.Popen(
+                [sys.executable, str(APP_ENTRYPOINT), *sys.argv[1:]],
+                cwd=str(APP_ROOT),
+                start_new_session=True,
+            )
+        except Exception as exc:
+            logger.exception("Failed to restart XPAK after self-update")
+            self.terminal.append_error(f"Automatic restart failed: {exc}")
+            self.app_update_status.setText("Updated, restart manually")
+            self.app_update_status.setStyleSheet("color: #e0af68; font-weight: 700; font-size: 12px;")
+            self.set_operation_controls_enabled(True)
+            return
+
+        QTimer.singleShot(250, QApplication.instance().quit)
 
     def _run(self, cmd: list, sudo: bool = False):
         password = ""

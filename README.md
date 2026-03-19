@@ -190,6 +190,7 @@ Click **Check for Updates** to scan for available updates using `checkupdates` (
 ### Maintenance Tab
 
 - **Check for App Update** — queries GitHub releases to see if a new version of XPAK is available
+- **Update to vX.Y.Z** — appears only when a newer XPAK release is found, runs `install.sh`, then restarts the app automatically
 - **Clean Package Cache** — runs `paccache -r -k 2` (keeps 2 versions of each package)
 - **Remove Orphans** — finds and removes unused dependency packages
 - **Sync Databases** — runs `pacman -Sy`
@@ -220,7 +221,7 @@ cd ~/.local/lib/xpak
 git pull
 ```
 
-You can also use the **Check for App Update** button in the Maintenance tab.
+You can also use the **Check for App Update** button in the Maintenance tab. If a new release is found, an **Update** button appears and XPAK can update and restart itself automatically.
 
 ---
 
