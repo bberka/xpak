@@ -1,3 +1,4 @@
+from pathlib import Path
 import subprocess
 import shutil
 import sys
@@ -8,8 +9,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QDialog, QTextEdit, QFrame, QApplication,
     QAbstractItemView, QCheckBox, QScrollArea,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from xpak import APP_ENTRYPOINT, APP_ROOT, INSTALL_SCRIPT
 from xpak.workers import (
@@ -28,6 +28,62 @@ from xpak.settings import (
 
 
 logger = get_logger("xpak.tabs")
+
+
+def open_in_file_manager(path: Path) -> bool:
+    path = Path(path).expanduser().resolve()
+    uri = path.as_uri()
+
+    # Prefer the desktop file manager D-Bus API so directories do not get
+    # handed off to editor associations like VS Code.
+    if shutil.which("dbus-send"):
+        try:
+            subprocess.run(
+                [
+                    "dbus-send",
+                    "--session",
+                    "--type=method_call",
+                    "--dest=org.freedesktop.FileManager1",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowFolders",
+                    f"array:string:{uri}",
+                    "string:",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except subprocess.CalledProcessError:
+            pass
+
+    # Fall back to common Linux file managers before the generic opener.
+    candidates = [
+        ["kioclient6", "exec", str(path)],
+        ["kioclient5", "exec", str(path)],
+        ["kioclient", "exec", str(path)],
+        ["dolphin", str(path)],
+        ["nautilus", str(path)],
+        ["nemo", str(path)],
+        ["thunar", str(path)],
+        ["pcmanfm", str(path)],
+        ["xdg-open", str(path)],
+    ]
+    for cmd in candidates:
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return True
+        except OSError:
+            continue
+
+    return False
 
 
 class SearchTab(QWidget):
@@ -1043,7 +1099,7 @@ class ToolsTab(QWidget):
     def open_log_folder(self):
         log_dir = get_log_dir()
         logger.info("Opening log folder: %s", log_dir)
-        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
+        opened = open_in_file_manager(log_dir)
         if not opened:
             self.terminal.append_error(f"Could not open log folder: {log_dir}")
 
