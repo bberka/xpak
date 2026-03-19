@@ -74,6 +74,7 @@ class SearchTab(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search packages...")
         self.search_input.returnPressed.connect(self.do_search)
+        self.setFocusProxy(self.search_input)
 
         self.source_selector = SourceSelector()
         self.source_selector.sources_changed.connect(self._on_sources_changed)
@@ -456,6 +457,7 @@ class InstalledTab(QWidget):
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText("Filter installed packages...")
         self.filter_input.textChanged.connect(self._apply_filter)
+        self.setFocusProxy(self.filter_input)
 
         self.source_filter = QComboBox()
         self.source_filter.addItems(["All", "pacman", "Flatpak"])
@@ -647,6 +649,7 @@ class UpdatesTab(QWidget):
         toolbar = QHBoxLayout()
         self.check_btn = QPushButton("Check for Updates")
         self.check_btn.clicked.connect(self.check_updates)
+        self.setFocusProxy(self.check_btn)
 
         self.update_all_btn = QPushButton("Update All")
         self.update_all_btn.setObjectName("primary")
@@ -843,6 +846,7 @@ class ToolsTab(QWidget):
         app_update_row = QHBoxLayout()
         self.check_app_update_btn = QPushButton("Check for App Update")
         self.check_app_update_btn.clicked.connect(self.check_app_update)
+        self.setFocusProxy(self.check_app_update_btn)
         app_update_row.addWidget(self.check_app_update_btn)
 
         self.update_app_btn = QPushButton("Update Now")

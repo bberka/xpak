@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QTimer, QSettings
 from PyQt6.QtGui import QShortcut, QKeySequence
+from PyQt6.QtGui import QShowEvent
 
 from xpak import APP_NAME, APP_VERSION
 from xpak.tabs import SearchTab, InstalledTab, UpdatesTab, ToolsTab, ShortcutsTab
@@ -18,14 +19,21 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._active_operation: str | None = None
+        self._initial_focus_scheduled = False
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(1000, 800)
         self.resize(1200, 800)
         self._build_ui()
         self._build_statusbar()
         self._setup_shortcuts()
-        QTimer.singleShot(0, self.focus_current_tab_primary_input)
         QTimer.singleShot(300, self._check_tools_on_startup)
+
+    def showEvent(self, event: QShowEvent):
+        super().showEvent(event)
+        if self._initial_focus_scheduled:
+            return
+        self._initial_focus_scheduled = True
+        self._schedule_focus_current_tab_primary_input()
 
     def _build_ui(self):
         central = QWidget()
@@ -89,7 +97,7 @@ class MainWindow(QMainWindow):
         if ToolCheckDialog.should_show():
             dlg = ToolCheckDialog(self)
             dlg.exec()
-        self.focus_current_tab_primary_input()
+        self._schedule_focus_current_tab_primary_input()
 
     def _setup_shortcuts(self):
         self._shortcuts: list[QShortcut] = []
@@ -110,7 +118,11 @@ class MainWindow(QMainWindow):
     def _activate_tab(self, index: int):
         if 0 <= index < self.tabs.count():
             self.tabs.setCurrentIndex(index)
-            self.focus_current_tab_primary_input()
+            self._schedule_focus_current_tab_primary_input()
+
+    def _schedule_focus_current_tab_primary_input(self):
+        for delay in (0, 75, 200):
+            QTimer.singleShot(delay, self.focus_current_tab_primary_input)
 
     def focus_current_tab_primary_input(self):
         current_tab = self.tabs.currentWidget()
