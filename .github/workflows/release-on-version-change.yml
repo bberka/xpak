@@ -1,0 +1,63 @@
+name: Release On Version Change
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - xpak/__init__.py
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read app version
+        id: version
+        run: |
+          VERSION=$(python - <<'PY'
+          import re
+          from pathlib import Path
+
+          content = Path("xpak/__init__.py").read_text(encoding="utf-8")
+          match = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', content, re.MULTILINE)
+          if not match:
+              raise SystemExit("APP_VERSION not found in xpak/__init__.py")
+          print(match.group(1))
+          PY
+          )
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_name=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag already exists
+        id: tag_check
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $VERSION already exists. Skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        if: steps.tag_check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_NAME: ${{ steps.version.outputs.release_name }}
+        run: |
+          gh release create "$VERSION" \
+            --title "$RELEASE_NAME" \
+            --generate-notes \
+            --latest
