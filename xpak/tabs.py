@@ -34,6 +34,7 @@ class SearchTab(QWidget):
     log_message = pyqtSignal(str, str)
 
     COLUMNS = ["Name", "Version", "Source", "Repo", "Votes", "Description"]
+    MIN_SEARCH_LENGTH = 2
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -79,7 +80,9 @@ class SearchTab(QWidget):
         # Search bar row
         search_row = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search packages...")
+        self.search_input.setPlaceholderText(
+            f"Search packages ({self.MIN_SEARCH_LENGTH}+ chars)..."
+        )
         self.search_input.returnPressed.connect(self.do_search)
         self.setFocusProxy(self.search_input)
 
@@ -187,6 +190,11 @@ class SearchTab(QWidget):
     def do_search(self):
         query = self.search_input.text().strip()
         if not query:
+            return
+        if len(query) < self.MIN_SEARCH_LENGTH:
+            msg = f"Enter at least {self.MIN_SEARCH_LENGTH} characters before searching"
+            self.status_label.setText(msg)
+            self.terminal.append_error(msg)
             return
 
         sources = self.source_selector.get_sources()
