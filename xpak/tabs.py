@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QSplitter, QProgressBar,
     QMessageBox, QDialog, QTextEdit, QFrame,
-    QAbstractItemView, QCheckBox,
+    QAbstractItemView, QCheckBox, QScrollArea,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QUrl
 from PyQt6.QtGui import QDesktopServices
@@ -800,15 +800,24 @@ class ToolsTab(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        scroll_content = QWidget()
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setSpacing(16)
+        content_layout.setContentsMargins(0, 0, 0, 0)
 
         # App Updates section
         app_update_label = QLabel("App Updates")
         app_update_label.setStyleSheet(
             "color: #7aa2f7; font-weight: 700; font-size: 14px;"
         )
-        layout.addWidget(app_update_label)
+        content_layout.addWidget(app_update_label)
 
         app_update_row = QHBoxLayout()
         self.check_app_update_btn = QPushButton("Check for App Update")
@@ -819,18 +828,18 @@ class ToolsTab(QWidget):
         self.app_update_status.setStyleSheet("color: #565f89; font-size: 12px; margin-left: 12px;")
         app_update_row.addWidget(self.app_update_status)
         app_update_row.addStretch()
-        layout.addLayout(app_update_row)
+        content_layout.addLayout(app_update_row)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet("color: #2a2b3d;")
-        layout.addWidget(sep)
+        content_layout.addWidget(sep)
 
         logging_label = QLabel("Logging")
         logging_label.setStyleSheet(
             "color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 4px;"
         )
-        layout.addWidget(logging_label)
+        content_layout.addWidget(logging_label)
 
         logging_row = QHBoxLayout()
         self.open_log_folder_btn = QPushButton("Open Log Folder")
@@ -842,19 +851,19 @@ class ToolsTab(QWidget):
         self.log_path_label.setWordWrap(True)
         logging_row.addWidget(self.log_path_label)
         logging_row.addStretch()
-        layout.addLayout(logging_row)
+        content_layout.addLayout(logging_row)
 
         sep_logs = QFrame()
         sep_logs.setFrameShape(QFrame.Shape.HLine)
         sep_logs.setStyleSheet("color: #2a2b3d;")
-        layout.addWidget(sep_logs)
+        content_layout.addWidget(sep_logs)
 
         # Maintenance buttons
         grid_label = QLabel("Maintenance Operations")
         grid_label.setStyleSheet(
             "color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 4px;"
         )
-        layout.addWidget(grid_label)
+        content_layout.addWidget(grid_label)
 
         ops = [
             (
@@ -927,8 +936,11 @@ class ToolsTab(QWidget):
 
         grid.addLayout(left_col)
         grid.addLayout(right_col)
-        layout.addLayout(grid)
-        layout.addStretch()
+        content_layout.addLayout(grid)
+        content_layout.addStretch()
+
+        scroll_area.setWidget(scroll_content)
+        layout.addWidget(scroll_area, 1)
 
         self.terminal = TerminalPanel(max_height=200)
         layout.addWidget(self.terminal)
