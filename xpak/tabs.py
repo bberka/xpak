@@ -104,7 +104,7 @@ class SearchTab(QWidget):
         self.order_combo.currentTextChanged.connect(self._apply_sort)
 
         self.search_desc_check = QCheckBox("Search descriptions")
-        self.search_desc_check.setChecked(False)
+        self.search_desc_check.setChecked(True)
         self.search_desc_check.setStyleSheet("color: #565f89; font-size: 12px; margin-left: 12px;")
         self.search_desc_check.stateChanged.connect(self._apply_sort)
 
@@ -223,6 +223,10 @@ class SearchTab(QWidget):
 
     def _apply_sort(self):
         if not self._results:
+            self._sorted_results = []
+            self.table.setRowCount(0)
+            if getattr(self, "_search_worker", None) is None:
+                self.status_label.setText("0 results")
             return
 
         sort_key = self.sort_combo.currentText()
@@ -264,6 +268,7 @@ class SearchTab(QWidget):
                 reverse=descending,
             )
         self.table.populate(self._sorted_results, self.COLUMNS)
+        self.status_label.setText(f"{len(self._sorted_results)} results")
 
     def _on_selection(self):
         rows = self.table.selectedItems()

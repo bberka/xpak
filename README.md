@@ -169,9 +169,10 @@ sudo pacman -S pacman-contrib
 1. Type a package name or keyword in the search box
 2. Use the "All Sources" dropdown to limit to specific sources (pacman, AUR, Flatpak)
 3. Use the Sort controls to reorder results by Name, Version, or Source
-4. Click a row to select a package
-5. Click **Install** or **Remove** to operate on the selected package
-6. Click **Package Info** to see full package details
+4. "Search descriptions" is enabled by default so pacman-style keyword matches in package descriptions are included
+5. Click a row to select a package
+6. Click **Install** or **Remove** to operate on the selected package
+7. Click **Package Info** to see full package details
 
 AUR installs require your sudo password. This is used to pre-authenticate sudo so yay can operate without a terminal.
 
