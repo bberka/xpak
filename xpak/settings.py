@@ -19,6 +19,7 @@ LAST_XPAK_UPDATE_CHECK_DATE_KEY = "updates/last_xpak_check_date"
 LAST_PACKAGE_UPDATE_CHECK_DATE_KEY = "updates/last_package_check_date"
 LAUNCH_ON_SYSTEM_STARTUP_KEY = "startup/launch_on_system_startup"
 START_TO_TRAY_ON_SYSTEM_STARTUP_KEY = "startup/start_to_tray"
+RESTART_INSTANCE_ARG = "--xpak-restart"
 
 AUTOSTART_DIR = Path.home() / ".config" / "autostart"
 AUTOSTART_FILE = AUTOSTART_DIR / "xpak.desktop"
@@ -119,7 +120,11 @@ def should_start_in_tray_from_args(argv: list[str]) -> bool:
 
 
 def strip_internal_args(argv: list[str]) -> list[str]:
-    return [arg for arg in argv if arg != "--start-in-tray"]
+    return [arg for arg in argv if arg not in {"--start-in-tray", RESTART_INSTANCE_ARG}]
+
+
+def is_restart_launch_from_args(argv: list[str]) -> bool:
+    return RESTART_INSTANCE_ARG in argv
 
 
 def _build_autostart_exec_command(start_to_tray: bool) -> str:

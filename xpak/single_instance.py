@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
@@ -32,35 +33,48 @@ class SingleInstanceManager(QObject):
         socket.disconnectFromServer()
         return True
 
-    def start(self) -> bool:
-        self._server = QLocalServer(self)
-        self._server.newConnection.connect(self._handle_new_connection)
+    def start(self, retry_timeout_ms: int = 0, retry_interval_ms: int = 100) -> bool:
+        deadline = time.monotonic() + max(retry_timeout_ms, 0) / 1000
 
-        if self._server.listen(self._server_name):
-            logger.info("Single-instance server listening on %s", self._server_name)
-            return True
+        while True:
+            if self._listen_once():
+                return True
 
-        if self._server.serverError() != QLocalServer.SocketError.AddressInUseError:
-            logger.error(
-                "Failed to start single-instance server '%s': %s",
-                self._server_name,
-                self._server.errorString(),
-            )
-            return False
+            if not self._server:
+                return False
 
-        logger.warning("Removing stale single-instance server '%s'", self._server_name)
+            if self._server.serverError() != QLocalServer.SocketError.AddressInUseError:
+                logger.error(
+                    "Failed to start single-instance server '%s': %s",
+                    self._server_name,
+                    self._server.errorString(),
+                )
+                return False
+
+            if not self._server_is_active():
+                logger.warning("Removing stale single-instance server '%s'", self._server_name)
+                QLocalServer.removeServer(self._server_name)
+                if self._listen_once():
+                    logger.info("Single-instance server recovered on %s", self._server_name)
+                    return True
+                continue
+
+            if retry_timeout_ms <= 0 or time.monotonic() >= deadline:
+                logger.warning(
+                    "Single-instance server '%s' is still active",
+                    self._server_name,
+                )
+                return False
+
+            time.sleep(max(retry_interval_ms, 1) / 1000)
+
+    def stop(self):
+        if not self._server:
+            return
+        if self._server.isListening():
+            logger.info("Stopping single-instance server on %s", self._server_name)
+            self._server.close()
         QLocalServer.removeServer(self._server_name)
-
-        if self._server.listen(self._server_name):
-            logger.info("Single-instance server recovered on %s", self._server_name)
-            return True
-
-        logger.error(
-            "Failed to recover single-instance server '%s': %s",
-            self._server_name,
-            self._server.errorString(),
-        )
-        return False
 
     def _handle_new_connection(self):
         if not self._server:
@@ -79,6 +93,20 @@ class SingleInstanceManager(QObject):
             logger.info("Received activation request from a second launch")
             self.activation_requested.emit()
         socket.disconnectFromServer()
+
+    def _listen_once(self) -> bool:
+        if self._server is None:
+            self._server = QLocalServer(self)
+            self._server.newConnection.connect(self._handle_new_connection)
+        return self._server.listen(self._server_name)
+
+    def _server_is_active(self, timeout_ms: int = 200) -> bool:
+        socket = QLocalSocket(self)
+        socket.connectToServer(self._server_name)
+        connected = socket.waitForConnected(timeout_ms)
+        if connected:
+            socket.disconnectFromServer()
+        return connected
 
 
 def _build_server_name(app_id: str) -> str:

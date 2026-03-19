@@ -21,6 +21,7 @@ from xpak.logging_service import get_logger, get_log_dir
 from xpak.settings import (
     load_startup_preferences,
     load_update_preferences,
+    RESTART_INSTANCE_ARG,
     save_startup_preferences,
     save_update_preferences,
     sync_autostart_file,
@@ -1218,7 +1219,7 @@ class ToolsTab(QWidget):
 
         try:
             subprocess.Popen(
-                [sys.executable, str(APP_ENTRYPOINT), *sys.argv[1:]],
+                [sys.executable, str(APP_ENTRYPOINT), RESTART_INSTANCE_ARG, *sys.argv[1:]],
                 cwd=str(APP_ROOT),
                 start_new_session=True,
             )

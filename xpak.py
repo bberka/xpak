@@ -10,7 +10,11 @@ from xpak.window import MainWindow
 from xpak import APP_NAME
 from xpak.logging_service import setup_logging, install_exception_hooks, get_logger
 from xpak.single_instance import SingleInstanceManager
-from xpak.settings import should_start_in_tray_from_args, strip_internal_args
+from xpak.settings import (
+    is_restart_launch_from_args,
+    should_start_in_tray_from_args,
+    strip_internal_args,
+)
 
 
 def main():
@@ -22,6 +26,7 @@ def main():
         should_start_in_tray_from_args(sys.argv[1:])
         and QSystemTrayIcon.isSystemTrayAvailable()
     )
+    restarting = is_restart_launch_from_args(sys.argv[1:])
     argv = [sys.argv[0], *strip_internal_args(sys.argv[1:])]
 
     app = QApplication(argv)
@@ -29,11 +34,12 @@ def main():
     app.setOrganizationName(APP_NAME)
 
     single_instance = SingleInstanceManager(APP_NAME)
-    if single_instance.activate_existing_instance():
+    if not restarting and single_instance.activate_existing_instance():
         logger.info("Activation forwarded to existing instance, exiting")
         sys.exit(0)
-    if not single_instance.start():
+    if not single_instance.start(retry_timeout_ms=3000 if restarting else 0):
         logger.warning("Continuing without single-instance enforcement")
+    app.aboutToQuit.connect(single_instance.stop)
 
     app.setStyleSheet(STYLESHEET)
     font = QFont("JetBrains Mono", 10)
