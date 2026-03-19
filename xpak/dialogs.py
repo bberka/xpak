@@ -63,6 +63,24 @@ class ToolCheckDialog(QDialog):
         self._build_ui()
         self._check_tools()
 
+    def _begin_operation(self, description: str) -> bool:
+        parent = self.parent()
+        if parent and hasattr(parent, "begin_operation"):
+            ok, msg = parent.begin_operation(description)
+            if not ok:
+                QMessageBox.warning(
+                    self,
+                    "Operation In Progress",
+                    f"Cannot start {description.lower()}: {msg}.",
+                )
+            return ok
+        return True
+
+    def _end_operation(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "end_operation"):
+            parent.end_operation()
+
     def _build_ui(self):
         outer = QVBoxLayout(self)
         outer.setSpacing(12)
@@ -224,6 +242,9 @@ class ToolCheckDialog(QDialog):
             return
         password = dlg.password()
 
+        if not self._begin_operation(f"Installing {tool['name']}"):
+            return
+
         self._terminal.setVisible(True)
         self._progress.setVisible(True)
         self._terminal.append_info(f"Installing {tool['name']}...")
@@ -239,6 +260,7 @@ class ToolCheckDialog(QDialog):
 
     def _on_install_done(self, success: bool, msg: str):
         self._progress.setVisible(False)
+        self._end_operation()
         if success:
             self._terminal.append_success(msg)
             self._terminal.append_info("Please restart XPAK to apply changes.")

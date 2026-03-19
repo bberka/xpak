@@ -31,6 +31,32 @@ class SearchTab(QWidget):
         self._query: str = ""
         self._build_ui()
 
+    def _begin_operation(self, description: str) -> bool:
+        window = self.window()
+        if hasattr(window, "begin_operation"):
+            ok, msg = window.begin_operation(description)
+            if not ok:
+                self.terminal.append_error(f"Cannot start {description.lower()}: {msg}.")
+            return ok
+        return True
+
+    def _end_operation(self):
+        window = self.window()
+        if hasattr(window, "end_operation"):
+            window.end_operation()
+
+    def set_operation_controls_enabled(self, enabled: bool):
+        search_busy = self._search_worker is not None and self._search_worker.isRunning()
+        op_busy = self._worker is not None and self._worker.isRunning()
+        selected_installed = bool(self._selected_pkg and self._selected_pkg.get("installed", False))
+
+        self.search_input.setEnabled(enabled and not search_busy)
+        self.source_selector.setEnabled(enabled and not search_busy)
+        self.search_btn.setEnabled(enabled and not search_busy)
+        self.install_btn.setEnabled(enabled and not op_busy and bool(self._selected_pkg) and not selected_installed)
+        self.remove_btn.setEnabled(enabled and not op_busy and selected_installed)
+        self.info_btn.setEnabled(bool(self._selected_pkg) and not op_busy)
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -147,6 +173,9 @@ class SearchTab(QWidget):
             self.terminal.append_error("No sources selected")
             return
 
+        if not self._begin_operation(f"Search: {query}"):
+            return
+
         self._results = []
         self._sorted_results = []
         self._query = query
@@ -162,7 +191,8 @@ class SearchTab(QWidget):
         self._search_worker.error.connect(self._on_search_error)
         self._search_worker.finished.connect(lambda: (
             self.progress.setVisible(False),
-            self.search_btn.setEnabled(True),
+            self._end_operation(),
+            self.set_operation_controls_enabled(True),
         ))
         self._search_worker.start()
 
@@ -341,6 +371,9 @@ class SearchTab(QWidget):
             password = dlg.password()
 
         verb = "Installing" if operation == "install" else "Removing"
+        if not self._begin_operation(f"{verb} {name}"):
+            return
+
         self.terminal.append_info(f"{verb} {name} via {source}")
         self.progress.setVisible(True)
         self.install_btn.setEnabled(False)
@@ -355,11 +388,12 @@ class SearchTab(QWidget):
     def _on_op_finished(self, success: bool, msg: str):
         self.terminal.set_worker(None)
         self.progress.setVisible(False)
+        self._end_operation()
         if success:
             self.terminal.append_success(msg)
         else:
             self.terminal.append_error(msg)
-        self._on_selection()
+        self.set_operation_controls_enabled(True)
 
 
 class InstalledTab(QWidget):
@@ -371,7 +405,28 @@ class InstalledTab(QWidget):
         self._filtered: list[dict] = []
         self._worker: CommandWorker | None = None
         self._build_ui()
-        QTimer.singleShot(200, self.load_packages)
+        QTimer.singleShot(200, lambda: self.load_packages(quiet=True))
+
+    def _begin_operation(self, description: str) -> bool:
+        window = self.window()
+        if hasattr(window, "begin_operation"):
+            ok, msg = window.begin_operation(description)
+            if not ok:
+                self.terminal.append_error(f"Cannot start {description.lower()}: {msg}.")
+            return ok
+        return True
+
+    def _end_operation(self):
+        window = self.window()
+        if hasattr(window, "end_operation"):
+            window.end_operation()
+
+    def set_operation_controls_enabled(self, enabled: bool):
+        loader_busy = hasattr(self, "_loader") and self._loader is not None and self._loader.isRunning()
+        worker_busy = self._worker is not None and self._worker.isRunning()
+
+        self.refresh_btn.setEnabled(enabled and not loader_busy)
+        self.remove_btn.setEnabled(enabled and not worker_busy and bool(self.table.selectedItems()))
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -420,14 +475,23 @@ class InstalledTab(QWidget):
         self.terminal = TerminalPanel(max_height=160)
         layout.addWidget(self.terminal)
 
-    def load_packages(self):
+    def load_packages(self, quiet: bool = False):
+        window = self.window()
+        if quiet and hasattr(window, "has_active_operation") and window.has_active_operation():
+            QTimer.singleShot(1000, lambda: self.load_packages(quiet=True))
+            return
+
+        if not self._begin_operation("Loading installed packages"):
+            return
+
         self.progress.setVisible(True)
         self.refresh_btn.setEnabled(False)
         self._loader = InstalledLoader("all")
         self._loader.results_ready.connect(self._on_loaded)
         self._loader.finished.connect(lambda: (
             self.progress.setVisible(False),
-            self.refresh_btn.setEnabled(True),
+            self._end_operation(),
+            self.set_operation_controls_enabled(True),
         ))
         self._loader.start()
 
@@ -483,6 +547,9 @@ class InstalledTab(QWidget):
                 return
             password = dlg.password()
 
+        if not self._begin_operation(f"Removing {pkg['name']}"):
+            return
+
         self.terminal.append_info(f"Removing {pkg['name']}")
         self.progress.setVisible(True)
         self.remove_btn.setEnabled(False)
@@ -496,12 +563,13 @@ class InstalledTab(QWidget):
     def _on_remove_done(self, success: bool, msg: str):
         self.terminal.set_worker(None)
         self.progress.setVisible(False)
+        self._end_operation()
         if success:
             self.terminal.append_success(msg)
             self.load_packages()
         else:
             self.terminal.append_error(msg)
-        self.remove_btn.setEnabled(True)
+            self.set_operation_controls_enabled(True)
 
 
 class UpdatesTab(QWidget):
@@ -512,7 +580,35 @@ class UpdatesTab(QWidget):
         self._updates: list[dict] = []
         self._worker: CommandWorker | None = None
         self._build_ui()
-        QTimer.singleShot(400, self.check_updates)
+        QTimer.singleShot(400, lambda: self.check_updates(quiet=True))
+
+    def _begin_operation(self, description: str) -> bool:
+        window = self.window()
+        if hasattr(window, "begin_operation"):
+            ok, msg = window.begin_operation(description)
+            if not ok:
+                self.terminal.append_error(f"Cannot start {description.lower()}: {msg}.")
+            return ok
+        return True
+
+    def _end_operation(self):
+        window = self.window()
+        if hasattr(window, "end_operation"):
+            window.end_operation()
+
+    def set_operation_controls_enabled(self, enabled: bool):
+        checker_busy = hasattr(self, "_checker") and self._checker is not None and self._checker.isRunning()
+        worker_busy = self._worker is not None and self._worker.isRunning()
+        has_updates = bool(self._updates)
+
+        self.check_btn.setEnabled(enabled and not checker_busy)
+        self.update_all_btn.setEnabled(enabled and not worker_busy and has_updates)
+        self.update_flatpak_btn.setEnabled(
+            enabled and not worker_busy and shutil.which("flatpak") is not None
+        )
+        self.update_aur_btn.setEnabled(
+            enabled and not worker_busy and shutil.which("yay") is not None
+        )
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -560,7 +656,15 @@ class UpdatesTab(QWidget):
         self.terminal = TerminalPanel(max_height=200)
         layout.addWidget(self.terminal)
 
-    def check_updates(self):
+    def check_updates(self, quiet: bool = False):
+        window = self.window()
+        if quiet and hasattr(window, "has_active_operation") and window.has_active_operation():
+            QTimer.singleShot(1000, lambda: self.check_updates(quiet=True))
+            return
+
+        if not self._begin_operation("Checking for updates"):
+            return
+
         self.progress.setVisible(True)
         self.check_btn.setEnabled(False)
         self.update_all_btn.setEnabled(False)
@@ -570,7 +674,8 @@ class UpdatesTab(QWidget):
         self._checker.updates_ready.connect(self._on_updates)
         self._checker.finished.connect(lambda: (
             self.progress.setVisible(False),
-            self.check_btn.setEnabled(True),
+            self._end_operation(),
+            self.set_operation_controls_enabled(True),
         ))
         self._checker.start()
 
@@ -616,6 +721,9 @@ class UpdatesTab(QWidget):
         )
 
     def _run_update(self, cmd: list, sudo: bool = False, password: str = "", pre_auth: bool = False):
+        if not self._begin_operation(f"Running {' '.join(cmd[:2])}"):
+            return
+
         self.progress.setVisible(True)
         self.update_all_btn.setEnabled(False)
         self._worker = CommandWorker(cmd, sudo=sudo, password=password, pre_auth=pre_auth)
@@ -627,12 +735,13 @@ class UpdatesTab(QWidget):
     def _on_update_done(self, success: bool, msg: str):
         self.terminal.set_worker(None)
         self.progress.setVisible(False)
+        self._end_operation()
         if success:
             self.terminal.append_success(msg)
             self.check_updates()
         else:
             self.terminal.append_error(msg)
-        self.update_all_btn.setEnabled(True)
+            self.set_operation_controls_enabled(True)
 
 
 class ToolsTab(QWidget):
@@ -640,7 +749,30 @@ class ToolsTab(QWidget):
         super().__init__(parent)
         self._worker: CommandWorker | None = None
         self._app_update_checker: AppUpdateChecker | None = None
+        self._action_buttons: list[QPushButton] = []
         self._build_ui()
+
+    def _begin_operation(self, description: str) -> bool:
+        window = self.window()
+        if hasattr(window, "begin_operation"):
+            ok, msg = window.begin_operation(description)
+            if not ok:
+                self.terminal.append_error(f"Cannot start {description.lower()}: {msg}.")
+            return ok
+        return True
+
+    def _end_operation(self):
+        window = self.window()
+        if hasattr(window, "end_operation"):
+            window.end_operation()
+
+    def set_operation_controls_enabled(self, enabled: bool):
+        worker_busy = self._worker is not None and self._worker.isRunning()
+        for btn in self._action_buttons:
+            btn.setEnabled(enabled and not worker_busy)
+        self.check_app_update_btn.setEnabled(
+            enabled and not (self._app_update_checker is not None and self._app_update_checker.isRunning())
+        )
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -735,6 +867,7 @@ class ToolsTab(QWidget):
             btn = QPushButton("Run")
             btn.clicked.connect(fn)
             btn.setFixedWidth(70)
+            self._action_buttons.append(btn)
 
             card_layout.addWidget(t)
             card_layout.addWidget(d)
@@ -798,6 +931,9 @@ class ToolsTab(QWidget):
                 return
             password = dlg.password()
 
+        if not self._begin_operation(f"Running {' '.join(cmd[:2])}"):
+            return
+
         self.progress.setVisible(True)
         self._worker = CommandWorker(cmd, sudo, password)
         self._worker.output_line.connect(self.terminal.append_line)
@@ -808,10 +944,12 @@ class ToolsTab(QWidget):
     def _on_done(self, success: bool, msg: str):
         self.terminal.set_worker(None)
         self.progress.setVisible(False)
+        self._end_operation()
         if success:
             self.terminal.append_success(msg)
         else:
             self.terminal.append_error(msg)
+        self.set_operation_controls_enabled(True)
 
     def clean_cache(self):
         self.terminal.append_info("Cleaning package cache (keeping 2 versions)")

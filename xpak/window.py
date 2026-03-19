@@ -12,6 +12,7 @@ from xpak.dialogs import ToolCheckDialog
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._active_operation: str | None = None
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(1000, 800)
         self.resize(1200, 800)
@@ -67,6 +68,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.tools_tab, "Maintenance")
 
         main_layout.addWidget(self.tabs)
+        self._set_operation_controls_enabled(True)
 
     def _build_statusbar(self):
         self.statusbar = QStatusBar()
@@ -77,3 +79,30 @@ class MainWindow(QMainWindow):
         if ToolCheckDialog.should_show():
             dlg = ToolCheckDialog(self)
             dlg.exec()
+
+    def begin_operation(self, description: str) -> tuple[bool, str]:
+        if self._active_operation:
+            return False, f"'{self._active_operation}' is already in progress"
+
+        self._active_operation = description
+        self.statusbar.showMessage(f"{APP_NAME}: {description} in progress")
+        self._set_operation_controls_enabled(False)
+        return True, ""
+
+    def end_operation(self):
+        self._active_operation = None
+        self._set_operation_controls_enabled(True)
+        self.statusbar.showMessage(f"{APP_NAME} ready")
+
+    def has_active_operation(self) -> bool:
+        return self._active_operation is not None
+
+    def _set_operation_controls_enabled(self, enabled: bool):
+        for tab in (
+            getattr(self, "search_tab", None),
+            getattr(self, "installed_tab", None),
+            getattr(self, "updates_tab", None),
+            getattr(self, "tools_tab", None),
+        ):
+            if tab and hasattr(tab, "set_operation_controls_enabled"):
+                tab.set_operation_controls_enabled(enabled)
