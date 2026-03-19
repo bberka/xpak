@@ -10,6 +10,10 @@ from PyQt6.QtCore import Qt, QSettings
 
 from xpak.workers import CommandWorker
 from xpak.widgets import TerminalOutput
+from xpak.logging_service import get_logger
+
+
+logger = get_logger("xpak.dialogs")
 
 
 class PasswordDialog(QDialog):
@@ -234,6 +238,7 @@ class ToolCheckDialog(QDialog):
         self._cards_layout.addWidget(card)
 
     def _install_tool(self, tool: dict):
+        logger.info("Requested tool install: %s", tool["name"])
         dlg = PasswordDialog(
             self,
             message=f"Installing {tool['name']} via pacman requires sudo.",
@@ -253,6 +258,7 @@ class ToolCheckDialog(QDialog):
             tool["install_cmd"],
             sudo=True,
             password=password,
+            log_name=f"tool-install:{tool['name']}",
         )
         self._worker.output_line.connect(self._terminal.append_line)
         self._worker.finished.connect(self._on_install_done)
@@ -262,9 +268,11 @@ class ToolCheckDialog(QDialog):
         self._progress.setVisible(False)
         self._end_operation()
         if success:
+            logger.info("Tool install succeeded: %s", msg)
             self._terminal.append_success(msg)
             self._terminal.append_info("Please restart XPAK to apply changes.")
         else:
+            logger.error("Tool install failed: %s", msg)
             self._terminal.append_error(msg)
 
     def _on_close(self):

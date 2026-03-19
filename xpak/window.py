@@ -7,6 +7,10 @@ from PyQt6.QtCore import QTimer, QSettings
 from xpak import APP_NAME, APP_VERSION
 from xpak.tabs import SearchTab, InstalledTab, UpdatesTab, ToolsTab
 from xpak.dialogs import ToolCheckDialog
+from xpak.logging_service import get_logger
+
+
+logger = get_logger("xpak.window")
 
 
 class MainWindow(QMainWindow):
@@ -82,14 +86,22 @@ class MainWindow(QMainWindow):
 
     def begin_operation(self, description: str) -> tuple[bool, str]:
         if self._active_operation:
+            logger.warning(
+                "Blocked operation '%s' because '%s' is already active",
+                description,
+                self._active_operation,
+            )
             return False, f"'{self._active_operation}' is already in progress"
 
         self._active_operation = description
+        logger.info("Operation started: %s", description)
         self.statusbar.showMessage(f"{APP_NAME}: {description} in progress")
         self._set_operation_controls_enabled(False)
         return True, ""
 
     def end_operation(self):
+        if self._active_operation:
+            logger.info("Operation finished: %s", self._active_operation)
         self._active_operation = None
         self._set_operation_controls_enabled(True)
         self.statusbar.showMessage(f"{APP_NAME} ready")

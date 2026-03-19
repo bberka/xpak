@@ -5,6 +5,11 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QTextCursor, QAction
 
+from xpak.logging_service import get_logger
+
+
+terminal_logger = get_logger("xpak.terminal")
+
 
 class TerminalOutput(QTextEdit):
     def __init__(self, parent=None):
@@ -13,6 +18,7 @@ class TerminalOutput(QTextEdit):
         self.setMinimumHeight(180)
 
     def append_line(self, line: str, color: str = "#a9b1d6"):
+        terminal_logger.info("%s", line)
         self.moveCursor(QTextCursor.MoveOperation.End)
         html = f'<span style="color:{color}; white-space:pre-wrap;">{self._escape(line)}</span><br>'
         self.insertHtml(html)

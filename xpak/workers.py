@@ -11,6 +11,10 @@ from urllib.error import URLError
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from xpak import APP_VERSION
+from xpak.logging_service import get_logger
+
+
+logger = get_logger("xpak.workers")
 
 
 def _pre_auth_sudo(password: str) -> bool:
@@ -45,12 +49,20 @@ class CommandWorker(QThread):
     finished = pyqtSignal(bool, str)
     progress = pyqtSignal(int)
 
-    def __init__(self, cmd: list, sudo: bool = False, password: str = "", pre_auth: bool = False):
+    def __init__(
+        self,
+        cmd: list,
+        sudo: bool = False,
+        password: str = "",
+        pre_auth: bool = False,
+        log_name: str = "",
+    ):
         super().__init__()
         self.cmd = cmd
         self.sudo = sudo
         self.password = password
         self.pre_auth = pre_auth
+        self.log_name = log_name or "command"
         self._abort = False
         self._process = None
 
@@ -71,6 +83,13 @@ class CommandWorker(QThread):
     def run(self):
         askpass_path = None
         try:
+            logger.info(
+                "CommandWorker starting [%s]: cmd=%s sudo=%s pre_auth=%s",
+                self.log_name,
+                self.cmd,
+                self.sudo,
+                self.pre_auth,
+            )
             env = None
 
             # For AUR (yay) operations: pre-authenticate sudo and set up SUDO_ASKPASS
@@ -78,6 +97,7 @@ class CommandWorker(QThread):
             if self.pre_auth and self.password:
                 ok = _pre_auth_sudo(self.password)
                 if not ok:
+                    logger.error("CommandWorker pre-auth failed [%s]", self.log_name)
                     self.finished.emit(False, "sudo authentication failed")
                     return
                 askpass_path = _create_askpass_helper(self.password)
@@ -111,10 +131,12 @@ class CommandWorker(QThread):
             for line in iter(self._process.stdout.readline, ""):
                 if self._abort:
                     self._process.terminate()
+                    logger.warning("CommandWorker aborted [%s]", self.log_name)
                     self.finished.emit(False, "Operation aborted")
                     return
                 line = line.rstrip()
                 if line:
+                    logger.debug("Command output [%s]: %s", self.log_name, line)
                     if "did not pass the validity check" in line:
                         checksum_failed = True
                     self.output_line.emit(line)
@@ -133,11 +155,22 @@ class CommandWorker(QThread):
                     if success
                     else f"Operation failed (exit {self._process.returncode})"
                 )
+            if success:
+                logger.info("CommandWorker succeeded [%s]: %s", self.log_name, self.cmd)
+            else:
+                logger.error(
+                    "CommandWorker failed [%s]: exit=%s cmd=%s",
+                    self.log_name,
+                    self._process.returncode,
+                    self.cmd,
+                )
             self.finished.emit(success, msg)
 
         except FileNotFoundError as e:
+            logger.exception("CommandWorker missing command [%s]", self.log_name)
             self.finished.emit(False, f"Command not found: {e}")
         except Exception as e:
+            logger.exception("CommandWorker crashed [%s]", self.log_name)
             self.finished.emit(False, str(e))
         finally:
             if askpass_path:
@@ -160,6 +193,7 @@ class SearchWorker(QThread):
     def run(self):
         total = 0
         try:
+            logger.info("SearchWorker starting: query=%s sources=%s", self.query, self.sources)
             tasks = {}
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 if "pacman" in self.sources:
@@ -173,13 +207,17 @@ class SearchWorker(QThread):
                     try:
                         results = future.result()
                         if results:
+                            logger.info("SearchWorker received %s results", len(results))
                             total += len(results)
                             self.result_chunk.emit(results)
                     except Exception as e:
+                        logger.exception("SearchWorker future failed")
                         self.error.emit(str(e))
 
+            logger.info("SearchWorker complete: total=%s", total)
             self.search_done.emit(total)
         except Exception as e:
+            logger.exception("SearchWorker crashed")
             self.error.emit(str(e))
             self.search_done.emit(0)
 
@@ -319,6 +357,7 @@ class InstalledLoader(QThread):
     def run(self):
         results = []
         tasks = []
+        logger.info("InstalledLoader starting for source=%s", self.source)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             if self.source in ("pacman", "all"):
                 tasks.append(executor.submit(self._list_pacman))
@@ -329,8 +368,10 @@ class InstalledLoader(QThread):
                 try:
                     results.extend(future.result())
                 except Exception:
+                    logger.exception("InstalledLoader future failed")
                     pass
 
+        logger.info("InstalledLoader complete: count=%s", len(results))
         self.results_ready.emit(results)
 
     def _list_pacman(self) -> list:
@@ -387,6 +428,7 @@ class UpdateChecker(QThread):
     def run(self):
         results = []
         tasks = []
+        logger.info("UpdateChecker starting")
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             tasks.append(executor.submit(self._check_pacman_updates))
             if shutil.which("flatpak"):
@@ -396,8 +438,10 @@ class UpdateChecker(QThread):
                 try:
                     results.extend(future.result())
                 except Exception:
+                    logger.exception("UpdateChecker future failed")
                     pass
 
+        logger.info("UpdateChecker complete: count=%s", len(results))
         self.updates_ready.emit(results)
 
     def _check_pacman_updates(self) -> list:
@@ -458,6 +502,7 @@ class AppUpdateChecker(QThread):
 
     def run(self):
         try:
+            logger.info("AppUpdateChecker starting")
             req = Request(
                 self.GITHUB_API_URL,
                 headers={"Accept": "application/vnd.github+json", "User-Agent": "xpak"},
@@ -476,11 +521,15 @@ class AppUpdateChecker(QThread):
             latest = tuple(int(x) for x in latest_tag.split("."))
 
             if latest > current:
+                logger.info("App update available: current=%s latest=%s", APP_VERSION, latest_tag)
                 self.update_available.emit(latest_tag, html_url)
             else:
+                logger.info("App already up to date: current=%s latest=%s", APP_VERSION, latest_tag)
                 self.no_update.emit()
 
         except URLError as e:
+            logger.exception("AppUpdateChecker network error")
             self.error.emit(f"Network error: {e}")
         except Exception as e:
+            logger.exception("AppUpdateChecker crashed")
             self.error.emit(str(e))

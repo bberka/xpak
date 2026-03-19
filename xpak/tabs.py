@@ -7,13 +7,18 @@ from PyQt6.QtWidgets import (
     QMessageBox, QDialog, QTextEdit, QFrame,
     QAbstractItemView, QCheckBox,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QUrl
+from PyQt6.QtGui import QDesktopServices
 
 from xpak.workers import (
     CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker
 )
 from xpak.widgets import TerminalOutput, TerminalPanel, PackageTable, SourceSelector
 from xpak.dialogs import PasswordDialog
+from xpak.logging_service import get_logger, get_log_dir
+
+
+logger = get_logger("xpak.tabs")
 
 
 class SearchTab(QWidget):
@@ -379,7 +384,13 @@ class SearchTab(QWidget):
         self.install_btn.setEnabled(False)
         self.remove_btn.setEnabled(False)
 
-        self._worker = CommandWorker(cmd, sudo=sudo, password=password, pre_auth=pre_auth)
+        self._worker = CommandWorker(
+            cmd,
+            sudo=sudo,
+            password=password,
+            pre_auth=pre_auth,
+            log_name=f"search:{operation}:{name}",
+        )
         self._worker.output_line.connect(self.terminal.append_line)
         self._worker.finished.connect(self._on_op_finished)
         self._worker.start()
@@ -554,7 +565,12 @@ class InstalledTab(QWidget):
         self.progress.setVisible(True)
         self.remove_btn.setEnabled(False)
 
-        self._worker = CommandWorker(cmd, sudo, password)
+        self._worker = CommandWorker(
+            cmd,
+            sudo,
+            password,
+            log_name=f"installed:remove:{pkg['name']}",
+        )
         self._worker.output_line.connect(self.terminal.append_line)
         self._worker.finished.connect(self._on_remove_done)
         self._worker.start()
@@ -726,7 +742,13 @@ class UpdatesTab(QWidget):
 
         self.progress.setVisible(True)
         self.update_all_btn.setEnabled(False)
-        self._worker = CommandWorker(cmd, sudo=sudo, password=password, pre_auth=pre_auth)
+        self._worker = CommandWorker(
+            cmd,
+            sudo=sudo,
+            password=password,
+            pre_auth=pre_auth,
+            log_name=f"updates:{' '.join(cmd[:2])}",
+        )
         self._worker.output_line.connect(self.terminal.append_line)
         self._worker.finished.connect(self._on_update_done)
         self._worker.start()
@@ -773,6 +795,8 @@ class ToolsTab(QWidget):
         self.check_app_update_btn.setEnabled(
             enabled and not (self._app_update_checker is not None and self._app_update_checker.isRunning())
         )
+        if hasattr(self, "open_log_folder_btn"):
+            self.open_log_folder_btn.setEnabled(enabled)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -801,6 +825,29 @@ class ToolsTab(QWidget):
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet("color: #2a2b3d;")
         layout.addWidget(sep)
+
+        logging_label = QLabel("Logging")
+        logging_label.setStyleSheet(
+            "color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 4px;"
+        )
+        layout.addWidget(logging_label)
+
+        logging_row = QHBoxLayout()
+        self.open_log_folder_btn = QPushButton("Open Log Folder")
+        self.open_log_folder_btn.clicked.connect(self.open_log_folder)
+        logging_row.addWidget(self.open_log_folder_btn)
+
+        self.log_path_label = QLabel(str(get_log_dir()))
+        self.log_path_label.setStyleSheet("color: #565f89; font-size: 11px;")
+        self.log_path_label.setWordWrap(True)
+        logging_row.addWidget(self.log_path_label)
+        logging_row.addStretch()
+        layout.addLayout(logging_row)
+
+        sep_logs = QFrame()
+        sep_logs.setFrameShape(QFrame.Shape.HLine)
+        sep_logs.setStyleSheet("color: #2a2b3d;")
+        layout.addWidget(sep_logs)
 
         # Maintenance buttons
         grid_label = QLabel("Maintenance Operations")
@@ -906,6 +953,13 @@ class ToolsTab(QWidget):
         )
         self._app_update_checker.start()
 
+    def open_log_folder(self):
+        log_dir = get_log_dir()
+        logger.info("Opening log folder: %s", log_dir)
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
+        if not opened:
+            self.terminal.append_error(f"Could not open log folder: {log_dir}")
+
     def _on_update_available(self, version: str, url: str):
         self.app_update_status.setText(f"Update available: v{version}")
         self.app_update_status.setStyleSheet("color: #e0af68; font-weight: 700; font-size: 12px;")
@@ -935,7 +989,12 @@ class ToolsTab(QWidget):
             return
 
         self.progress.setVisible(True)
-        self._worker = CommandWorker(cmd, sudo, password)
+        self._worker = CommandWorker(
+            cmd,
+            sudo,
+            password,
+            log_name=f"maintenance:{' '.join(cmd[:2])}",
+        )
         self._worker.output_line.connect(self.terminal.append_line)
         self._worker.finished.connect(self._on_done)
         self._worker.start()
@@ -990,6 +1049,7 @@ class ToolsTab(QWidget):
             for line in out.strip().splitlines():
                 self.terminal.append_line(f"  {line}", "#c0caf5")
         except Exception as e:
+            logger.exception("Failed to list explicitly installed packages")
             self.terminal.append_error(str(e))
 
     def fix_broken(self):
