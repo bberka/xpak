@@ -195,7 +195,7 @@ class SourceSelector(QPushButton):
     def _update_text(self):
         checked = self.get_sources()
         if set(checked) == set(self._ALL_SOURCES):
-            self.setText("All Sources \u25be")
+            self.setText("All Sources")
         else:
             self.setText(", ".join(s.upper() for s in checked) + " \u25be")
 
