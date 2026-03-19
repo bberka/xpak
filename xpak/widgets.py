@@ -61,7 +61,7 @@ class TerminalPanel(QWidget):
         self._input.returnPressed.connect(self._send)
 
         self._btn = QPushButton("Send")
-        self._btn.setFixedWidth(60)
+        self._btn.setFixedWidth(84)
         self._btn.setEnabled(False)
         self._btn.clicked.connect(self._send)
 
