@@ -1,10 +1,9 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QTabWidget, QStatusBar, QMessageBox,
+    QLabel, QMenu, QMessageBox, QStatusBar, QStyle, QSystemTrayIcon, QTabWidget,
 )
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QShortcut, QKeySequence
-from PyQt6.QtGui import QShowEvent
+from PyQt6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence, QShortcut, QShowEvent
 
 from xpak import APP_NAME, APP_VERSION
 from xpak.tabs import SearchTab, InstalledTab, UpdatesTab, ToolsTab, SettingsTab, ShortcutsTab
@@ -12,8 +11,11 @@ from xpak.dialogs import ToolCheckDialog, UpdatePreferencesDialog
 from xpak.workers import UpdateChecker, AppUpdateChecker
 from xpak.logging_service import get_logger
 from xpak.settings import (
+    load_startup_preferences,
     load_update_preferences,
     save_update_preferences,
+    save_startup_preferences,
+    sync_autostart_file,
     should_prompt_for_update_preferences,
 )
 
@@ -28,12 +30,17 @@ class MainWindow(QMainWindow):
         self._initial_focus_scheduled = False
         self._startup_package_checker: UpdateChecker | None = None
         self._startup_app_checker: AppUpdateChecker | None = None
+        self._tray_icon: QSystemTrayIcon | None = None
+        self._tray_menu: QMenu | None = None
+        self._start_hidden_to_tray = False
+        self._close_to_tray_enabled = False
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(1000, 800)
         self.resize(1200, 800)
         self._build_ui()
         self._build_statusbar()
         self._setup_shortcuts()
+        self.refresh_tray_preferences()
         QTimer.singleShot(300, self._check_tools_on_startup)
 
     def showEvent(self, event: QShowEvent):
@@ -42,6 +49,19 @@ class MainWindow(QMainWindow):
             return
         self._initial_focus_scheduled = True
         self._schedule_focus_current_tab_primary_input()
+
+    def closeEvent(self, event: QCloseEvent):
+        if self._close_to_tray_enabled and self._tray_icon and self._tray_icon.isVisible():
+            event.ignore()
+            self.hide()
+            self._tray_icon.showMessage(
+                APP_NAME,
+                "XPAK is still running in the system tray.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+            return
+        super().closeEvent(event)
 
     def _build_ui(self):
         central = QWidget()
@@ -109,7 +129,16 @@ class MainWindow(QMainWindow):
             dlg.exec()
         self._maybe_prompt_update_preferences()
         self.settings_tab.reload_preferences()
+        self.refresh_tray_preferences()
         self._start_startup_update_checks()
+        if self._start_hidden_to_tray and self._tray_icon:
+            self.hide()
+            self._tray_icon.showMessage(
+                APP_NAME,
+                "XPAK started in the system tray.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
         self._schedule_focus_current_tab_primary_input()
 
     def _setup_shortcuts(self):
@@ -184,14 +213,19 @@ class MainWindow(QMainWindow):
             return
 
         _, auto_check_xpak, auto_check_packages = load_update_preferences()
+        launch_on_startup, start_to_tray = load_startup_preferences()
         dlg = UpdatePreferencesDialog(
             self,
             auto_check_xpak=auto_check_xpak,
             auto_check_packages=auto_check_packages,
+            launch_on_startup=launch_on_startup,
+            start_to_tray=start_to_tray,
         )
         if dlg.exec():
-            selected_xpak, selected_packages = dlg.selected_preferences()
+            selected_xpak, selected_packages, selected_launch, selected_tray = dlg.selected_preferences()
             save_update_preferences(selected_xpak, selected_packages)
+            save_startup_preferences(selected_launch, selected_tray)
+            sync_autostart_file(selected_launch, selected_tray)
 
     def _start_startup_update_checks(self):
         _, auto_check_xpak, auto_check_packages = load_update_preferences()
@@ -251,3 +285,69 @@ class MainWindow(QMainWindow):
         if answer == QMessageBox.StandardButton.Yes:
             self.tabs.setCurrentWidget(self.updates_tab)
             self._schedule_focus_current_tab_primary_input()
+
+    def set_start_hidden_to_tray(self, enabled: bool):
+        self._start_hidden_to_tray = enabled
+
+    def refresh_tray_preferences(self):
+        launch_on_startup, start_to_tray = load_startup_preferences()
+        self._close_to_tray_enabled = (
+            launch_on_startup and start_to_tray and QSystemTrayIcon.isSystemTrayAvailable()
+        )
+        if self._close_to_tray_enabled:
+            self._ensure_tray_icon()
+        elif self._tray_icon:
+            self._tray_icon.hide()
+
+    def _ensure_tray_icon(self):
+        if self._tray_icon is not None:
+            self._tray_icon.show()
+            return
+
+        icon = QIcon.fromTheme("system-software-install")
+        if icon.isNull():
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon)
+
+        self._tray_icon = QSystemTrayIcon(icon, self)
+        self._tray_icon.setToolTip(APP_NAME)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+
+        self._tray_menu = QMenu(self)
+        show_action = QAction("Show XPAK", self)
+        show_action.triggered.connect(self._show_from_tray)
+        self._tray_menu.addAction(show_action)
+
+        hide_action = QAction("Hide XPAK", self)
+        hide_action.triggered.connect(self.hide)
+        self._tray_menu.addAction(hide_action)
+
+        self._tray_menu.addSeparator()
+
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(self._quit_from_tray)
+        self._tray_menu.addAction(quit_action)
+
+        self._tray_icon.setContextMenu(self._tray_menu)
+        self._tray_icon.show()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason):
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            if self.isVisible():
+                self.hide()
+            else:
+                self._show_from_tray()
+
+    def _show_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self._schedule_focus_current_tab_primary_input()
+
+    def _quit_from_tray(self):
+        self._close_to_tray_enabled = False
+        if self._tray_icon:
+            self._tray_icon.hide()
+        self.close()

@@ -1,4 +1,10 @@
+import shlex
+import sys
+from pathlib import Path
+
 from PyQt6.QtCore import QSettings
+
+from xpak import APP_ENTRYPOINT
 
 
 SETTINGS_ORG = "xpak"
@@ -7,6 +13,12 @@ SETTINGS_APP = "xpak"
 UPDATE_PREFS_CONFIGURED_KEY = "updates/preferences_configured"
 AUTO_CHECK_XPAK_UPDATES_KEY = "updates/auto_check_xpak"
 AUTO_CHECK_PACKAGE_UPDATES_KEY = "updates/auto_check_packages"
+LAUNCH_ON_SYSTEM_STARTUP_KEY = "startup/launch_on_system_startup"
+START_TO_TRAY_ON_SYSTEM_STARTUP_KEY = "startup/start_to_tray"
+
+AUTOSTART_DIR = Path.home() / ".config" / "autostart"
+AUTOSTART_FILE = AUTOSTART_DIR / "xpak.desktop"
+DEFAULT_LAUNCHER = Path.home() / ".local" / "bin" / "xpak"
 
 
 def get_settings() -> QSettings:
@@ -32,3 +44,69 @@ def save_update_preferences(auto_check_xpak: bool, auto_check_packages: bool):
 def should_prompt_for_update_preferences() -> bool:
     configured, _, _ = load_update_preferences()
     return not configured
+
+
+def load_startup_preferences() -> tuple[bool, bool]:
+    settings = get_settings()
+    launch_on_startup = settings.value(LAUNCH_ON_SYSTEM_STARTUP_KEY, False, type=bool)
+    start_to_tray = settings.value(START_TO_TRAY_ON_SYSTEM_STARTUP_KEY, False, type=bool)
+    return launch_on_startup, start_to_tray
+
+
+def save_startup_preferences(launch_on_startup: bool, start_to_tray: bool):
+    settings = get_settings()
+    settings.setValue(LAUNCH_ON_SYSTEM_STARTUP_KEY, launch_on_startup)
+    settings.setValue(START_TO_TRAY_ON_SYSTEM_STARTUP_KEY, launch_on_startup and start_to_tray)
+    settings.sync()
+
+
+def sync_autostart_file(launch_on_startup: bool, start_to_tray: bool):
+    if not launch_on_startup:
+        if AUTOSTART_FILE.exists():
+            AUTOSTART_FILE.unlink()
+        return
+
+    AUTOSTART_DIR.mkdir(parents=True, exist_ok=True)
+    exec_command = _build_autostart_exec_command(start_to_tray=start_to_tray)
+    AUTOSTART_FILE.write_text(
+        "\n".join(
+            [
+                "[Desktop Entry]",
+                "Type=Application",
+                "Version=1.0",
+                "Name=XPAK",
+                "Comment=Start XPAK automatically on login",
+                f"Exec={exec_command}",
+                "Icon=system-software-install",
+                "Terminal=false",
+                "Categories=System;PackageManager;",
+                "StartupWMClass=xpak",
+                "X-GNOME-Autostart-enabled=true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def should_start_in_tray_from_args(argv: list[str]) -> bool:
+    if "--start-in-tray" not in argv:
+        return False
+    launch_on_startup, start_to_tray = load_startup_preferences()
+    return launch_on_startup and start_to_tray
+
+
+def strip_internal_args(argv: list[str]) -> list[str]:
+    return [arg for arg in argv if arg != "--start-in-tray"]
+
+
+def _build_autostart_exec_command(start_to_tray: bool) -> str:
+    if DEFAULT_LAUNCHER.is_file():
+        parts = [str(DEFAULT_LAUNCHER)]
+    else:
+        parts = [sys.executable, str(APP_ENTRYPOINT)]
+
+    if start_to_tray:
+        parts.append("--start-in-tray")
+
+    return " ".join(shlex.quote(part) for part in parts)

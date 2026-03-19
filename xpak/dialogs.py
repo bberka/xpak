@@ -293,22 +293,24 @@ class UpdatePreferencesDialog(QDialog):
         parent=None,
         auto_check_xpak: bool = True,
         auto_check_packages: bool = True,
+        launch_on_startup: bool = False,
+        start_to_tray: bool = False,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Startup Update Checks")
+        self.setWindowTitle("Startup Preferences")
         self.setMinimumWidth(500)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        title = QLabel("Check for updates on startup?")
+        title = QLabel("Choose startup preferences")
         title.setStyleSheet("color: #7aa2f7; font-size: 16px; font-weight: 800;")
         layout.addWidget(title)
 
         description = QLabel(
-            "Choose which update checks XPAK should run automatically in the background "
-            "when it starts. You can change this later in the Settings tab."
+            "Choose which actions XPAK should perform automatically when it starts. "
+            "You can change these later in the Settings tab."
         )
         description.setWordWrap(True)
         description.setStyleSheet("color: #565f89; font-size: 12px;")
@@ -324,9 +326,24 @@ class UpdatePreferencesDialog(QDialog):
         self.package_updates_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.package_updates_check)
 
+        launch_title = QLabel("System startup")
+        launch_title.setStyleSheet("color: #7aa2f7; font-size: 14px; font-weight: 700; margin-top: 6px;")
+        layout.addWidget(launch_title)
+
+        self.launch_on_startup_check = QCheckBox("Launch XPAK automatically on system startup")
+        self.launch_on_startup_check.setChecked(launch_on_startup)
+        self.launch_on_startup_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        self.launch_on_startup_check.toggled.connect(self._sync_startup_controls)
+        layout.addWidget(self.launch_on_startup_check)
+
+        self.start_to_tray_check = QCheckBox("If launched on startup, start minimized to tray")
+        self.start_to_tray_check.setChecked(start_to_tray)
+        self.start_to_tray_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.start_to_tray_check)
+
         hint = QLabel(
             "If updates are found, XPAK will show a notification dialog and keep the result "
-            "visible in the related tab."
+            "visible in the related tab. Startup launch uses your desktop autostart folder."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #565f89; font-size: 11px;")
@@ -336,9 +353,17 @@ class UpdatePreferencesDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
+        self._sync_startup_controls(self.launch_on_startup_check.isChecked())
 
-    def selected_preferences(self) -> tuple[bool, bool]:
+    def _sync_startup_controls(self, enabled: bool):
+        self.start_to_tray_check.setEnabled(enabled)
+        if not enabled:
+            self.start_to_tray_check.setChecked(False)
+
+    def selected_preferences(self) -> tuple[bool, bool, bool, bool]:
         return (
             self.xpak_updates_check.isChecked(),
             self.package_updates_check.isChecked(),
+            self.launch_on_startup_check.isChecked(),
+            self.start_to_tray_check.isChecked(),
         )

@@ -18,7 +18,13 @@ from xpak.workers import (
 from xpak.widgets import TerminalOutput, TerminalPanel, PackageTable, SourceSelector
 from xpak.dialogs import PasswordDialog
 from xpak.logging_service import get_logger, get_log_dir
-from xpak.settings import load_update_preferences, save_update_preferences
+from xpak.settings import (
+    load_startup_preferences,
+    load_update_preferences,
+    save_startup_preferences,
+    save_update_preferences,
+    sync_autostart_file,
+)
 
 
 logger = get_logger("xpak.tabs")
@@ -1244,8 +1250,8 @@ class SettingsTab(QWidget):
         layout.addWidget(title)
 
         description = QLabel(
-            "Choose whether XPAK should check for its own updates and installed package "
-            "updates each time it starts."
+            "Choose whether XPAK should check for updates at startup and whether it "
+            "should launch automatically when your desktop session starts."
         )
         description.setWordWrap(True)
         description.setStyleSheet("color: #565f89; font-size: 12px;")
@@ -1258,6 +1264,19 @@ class SettingsTab(QWidget):
         self.auto_check_packages = QCheckBox("Check for installed apps and package updates on startup")
         self.auto_check_packages.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.auto_check_packages)
+
+        startup_title = QLabel("Desktop Startup")
+        startup_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
+        layout.addWidget(startup_title)
+
+        self.launch_on_startup = QCheckBox("Launch XPAK automatically on system startup")
+        self.launch_on_startup.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        self.launch_on_startup.toggled.connect(self._sync_startup_controls)
+        layout.addWidget(self.launch_on_startup)
+
+        self.start_to_tray = QCheckBox("If launched on startup, start minimized to tray")
+        self.start_to_tray.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.start_to_tray)
 
         action_row = QHBoxLayout()
         self.save_btn = QPushButton("Save Settings")
@@ -1281,19 +1300,37 @@ class SettingsTab(QWidget):
         self.save_btn.setEnabled(enabled)
         self.auto_check_xpak.setEnabled(enabled)
         self.auto_check_packages.setEnabled(enabled)
+        self.launch_on_startup.setEnabled(enabled)
+        self.start_to_tray.setEnabled(enabled and self.launch_on_startup.isChecked())
+
+    def _sync_startup_controls(self, enabled: bool):
+        self.start_to_tray.setEnabled(enabled and self.save_btn.isEnabled())
+        if not enabled:
+            self.start_to_tray.setChecked(False)
 
     def reload_preferences(self):
         _, auto_check_xpak, auto_check_packages = load_update_preferences()
+        launch_on_startup, start_to_tray = load_startup_preferences()
         self.auto_check_xpak.setChecked(auto_check_xpak)
         self.auto_check_packages.setChecked(auto_check_packages)
+        self.launch_on_startup.setChecked(launch_on_startup)
+        self.start_to_tray.setChecked(launch_on_startup and start_to_tray)
+        self._sync_startup_controls(launch_on_startup)
         self.status_label.setText("")
         self.status_label.setStyleSheet("color: #565f89; font-size: 12px;")
 
     def save_preferences(self):
+        launch_on_startup = self.launch_on_startup.isChecked()
+        start_to_tray = launch_on_startup and self.start_to_tray.isChecked()
         save_update_preferences(
             self.auto_check_xpak.isChecked(),
             self.auto_check_packages.isChecked(),
         )
+        save_startup_preferences(launch_on_startup, start_to_tray)
+        sync_autostart_file(launch_on_startup, start_to_tray)
+        window = self.window()
+        if hasattr(window, "refresh_tray_preferences"):
+            window.refresh_tray_preferences()
         self.status_label.setText("Settings saved")
         self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
 

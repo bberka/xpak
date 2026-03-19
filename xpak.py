@@ -3,12 +3,13 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 from PyQt6.QtGui import QFont
 from xpak.styles import STYLESHEET
 from xpak.window import MainWindow
 from xpak import APP_NAME
 from xpak.logging_service import setup_logging, install_exception_hooks, get_logger
+from xpak.settings import should_start_in_tray_from_args, strip_internal_args
 
 
 def main():
@@ -16,7 +17,13 @@ def main():
     install_exception_hooks()
     logger = get_logger("xpak.app")
 
-    app = QApplication(sys.argv)
+    start_in_tray = (
+        should_start_in_tray_from_args(sys.argv[1:])
+        and QSystemTrayIcon.isSystemTrayAvailable()
+    )
+    argv = [sys.argv[0], *strip_internal_args(sys.argv[1:])]
+
+    app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
     app.setStyleSheet(STYLESHEET)
@@ -25,7 +32,9 @@ def main():
     app.setFont(font)
     logger.info("Application starting")
     window = MainWindow()
-    window.show()
+    window.set_start_hidden_to_tray(start_in_tray)
+    if not start_in_tray:
+        window.show()
     exit_code = app.exec()
     logger.info("Application exiting with code %s", exit_code)
     sys.exit(exit_code)
