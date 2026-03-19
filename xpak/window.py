@@ -374,3 +374,16 @@ class MainWindow(QMainWindow):
         if self._tray_icon:
             self._tray_icon.hide()
         self.close()
+
+    def bring_to_front(self):
+        if self._tray_icon and not self.isVisible():
+            self._show_from_tray()
+            return
+
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        self._schedule_focus_current_tab_primary_input()

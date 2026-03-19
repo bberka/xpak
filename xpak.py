@@ -9,6 +9,7 @@ from xpak.styles import STYLESHEET
 from xpak.window import MainWindow
 from xpak import APP_NAME
 from xpak.logging_service import setup_logging, install_exception_hooks, get_logger
+from xpak.single_instance import SingleInstanceManager
 from xpak.settings import should_start_in_tray_from_args, strip_internal_args
 
 
@@ -26,12 +27,21 @@ def main():
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+
+    single_instance = SingleInstanceManager(APP_NAME)
+    if single_instance.activate_existing_instance():
+        logger.info("Activation forwarded to existing instance, exiting")
+        sys.exit(0)
+    if not single_instance.start():
+        logger.warning("Continuing without single-instance enforcement")
+
     app.setStyleSheet(STYLESHEET)
     font = QFont("JetBrains Mono", 10)
     font.setStyleHint(QFont.StyleHint.Monospace)
     app.setFont(font)
     logger.info("Application starting")
     window = MainWindow()
+    single_instance.activation_requested.connect(window.bring_to_front)
     window.set_start_hidden_to_tray(start_in_tray)
     if not start_in_tray:
         window.show()
