@@ -8,6 +8,15 @@ Supports pacman (official repos), yay (AUR), and Flatpak — all from a single d
 
 ---
 
+## Screenshots
+
+![XPAK Screenshot 1](images/1.png)
+![XPAK Screenshot 2](images/2.png)
+![XPAK Screenshot 3](images/3.png)
+![XPAK Screenshot 4](images/4.png)
+
+---
+
 ## Features
 
 - Search across pacman, AUR, and Flatpak simultaneously (concurrent search)
