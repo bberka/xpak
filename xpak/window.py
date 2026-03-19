@@ -3,9 +3,10 @@ from PyQt6.QtWidgets import (
     QLabel, QTabWidget, QStatusBar,
 )
 from PyQt6.QtCore import QTimer, QSettings
+from PyQt6.QtGui import QShortcut, QKeySequence
 
 from xpak import APP_NAME, APP_VERSION
-from xpak.tabs import SearchTab, InstalledTab, UpdatesTab, ToolsTab
+from xpak.tabs import SearchTab, InstalledTab, UpdatesTab, ToolsTab, ShortcutsTab
 from xpak.dialogs import ToolCheckDialog
 from xpak.logging_service import get_logger
 
@@ -22,6 +23,8 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self._build_ui()
         self._build_statusbar()
+        self._setup_shortcuts()
+        QTimer.singleShot(0, self.focus_current_tab_primary_input)
         QTimer.singleShot(300, self._check_tools_on_startup)
 
     def _build_ui(self):
@@ -65,11 +68,14 @@ class MainWindow(QMainWindow):
         self.installed_tab = InstalledTab()
         self.updates_tab = UpdatesTab()
         self.tools_tab = ToolsTab()
+        self.shortcuts_tab = ShortcutsTab()
 
         self.tabs.addTab(self.search_tab, "Search")
         self.tabs.addTab(self.installed_tab, "Installed")
         self.tabs.addTab(self.updates_tab, "Updates")
         self.tabs.addTab(self.tools_tab, "Maintenance")
+        self.tabs.addTab(self.shortcuts_tab, "Shortcuts")
+        self.tabs.currentChanged.connect(lambda _: self.focus_current_tab_primary_input())
 
         main_layout.addWidget(self.tabs)
         self._set_operation_controls_enabled(True)
@@ -83,6 +89,33 @@ class MainWindow(QMainWindow):
         if ToolCheckDialog.should_show():
             dlg = ToolCheckDialog(self)
             dlg.exec()
+        self.focus_current_tab_primary_input()
+
+    def _setup_shortcuts(self):
+        self._shortcuts: list[QShortcut] = []
+
+        self._register_shortcut("Ctrl+F", self.focus_current_tab_primary_input)
+
+        for index, sequence in enumerate(("Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5")):
+            self._register_shortcut(
+                sequence,
+                lambda idx=index: self._activate_tab(idx),
+            )
+
+    def _register_shortcut(self, sequence: str, callback):
+        shortcut = QShortcut(QKeySequence(sequence), self)
+        shortcut.activated.connect(callback)
+        self._shortcuts.append(shortcut)
+
+    def _activate_tab(self, index: int):
+        if 0 <= index < self.tabs.count():
+            self.tabs.setCurrentIndex(index)
+            self.focus_current_tab_primary_input()
+
+    def focus_current_tab_primary_input(self):
+        current_tab = self.tabs.currentWidget()
+        if current_tab and hasattr(current_tab, "focus_primary_input"):
+            current_tab.focus_primary_input()
 
     def begin_operation(self, description: str) -> tuple[bool, str]:
         if self._active_operation:
@@ -115,6 +148,7 @@ class MainWindow(QMainWindow):
             getattr(self, "installed_tab", None),
             getattr(self, "updates_tab", None),
             getattr(self, "tools_tab", None),
+            getattr(self, "shortcuts_tab", None),
         ):
             if tab and hasattr(tab, "set_operation_controls_enabled"):
                 tab.set_operation_controls_enabled(enabled)

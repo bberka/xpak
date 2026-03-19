@@ -165,6 +165,11 @@ class SearchTab(QWidget):
         self.progress.setFixedHeight(6)
         layout.addWidget(self.progress)
 
+    def focus_primary_input(self):
+        if self.search_input.isEnabled():
+            self.search_input.setFocus()
+            self.search_input.selectAll()
+
     def _on_sources_changed(self, sources: list):
         # If a search is currently showing results, re-run or just note the change
         pass
@@ -487,6 +492,11 @@ class InstalledTab(QWidget):
         self.terminal = TerminalPanel(max_height=160)
         layout.addWidget(self.terminal)
 
+    def focus_primary_input(self):
+        if self.filter_input.isEnabled():
+            self.filter_input.setFocus()
+            self.filter_input.selectAll()
+
     def load_packages(self, quiet: bool = False):
         window = self.window()
         if quiet and hasattr(window, "has_active_operation") and window.has_active_operation():
@@ -672,6 +682,10 @@ class UpdatesTab(QWidget):
 
         self.terminal = TerminalPanel(max_height=200)
         layout.addWidget(self.terminal)
+
+    def focus_primary_input(self):
+        if self.check_btn.isEnabled():
+            self.check_btn.setFocus()
 
     def check_updates(self, quiet: bool = False):
         window = self.window()
@@ -952,6 +966,10 @@ class ToolsTab(QWidget):
         self.progress.setFixedHeight(6)
         layout.addWidget(self.progress)
 
+    def focus_primary_input(self):
+        if self.check_app_update_btn.isEnabled():
+            self.check_app_update_btn.setFocus()
+
     def check_app_update(self):
         self.check_app_update_btn.setEnabled(False)
         self.app_update_status.setText("Checking...")
@@ -1068,3 +1086,81 @@ class ToolsTab(QWidget):
     def fix_broken(self):
         self.terminal.append_info("Attempting to fix broken dependencies")
         self._run(["pacman", "-Dk"], sudo=False)
+
+
+class ShortcutsTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        intro = QLabel(
+            "Keyboard shortcuts work while the XPAK window is focused."
+        )
+        intro.setStyleSheet("color: #a9b1d6;")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        sections = [
+            (
+                "Navigation",
+                [
+                    ("Ctrl+1", "Open Search"),
+                    ("Ctrl+2", "Open Installed"),
+                    ("Ctrl+3", "Open Updates"),
+                    ("Ctrl+4", "Open Maintenance"),
+                    ("Ctrl+5", "Open Shortcuts"),
+                ],
+            ),
+            (
+                "Focus",
+                [
+                    ("Ctrl+F", "Focus the main field or primary action in the current tab"),
+                ],
+            ),
+            (
+                "Examples",
+                [
+                    ("Search", "Ctrl+F focuses the package search input"),
+                    ("Installed", "Ctrl+F focuses the installed-package filter"),
+                    ("Updates", "Ctrl+F focuses the Check for Updates button"),
+                    ("Maintenance", "Ctrl+F focuses the Check for App Update button"),
+                ],
+            ),
+        ]
+
+        for title, shortcuts in sections:
+            card = QFrame()
+            card.setObjectName("sidebar-card")
+            card_layout = QVBoxLayout(card)
+            card_layout.setSpacing(10)
+
+            heading = QLabel(title)
+            heading.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px;")
+            card_layout.addWidget(heading)
+
+            for key, description in shortcuts:
+                row = QHBoxLayout()
+
+                key_lbl = QLabel(key)
+                key_lbl.setStyleSheet(
+                    "color: #c0caf5; font-weight: 700; min-width: 90px;"
+                )
+                desc_lbl = QLabel(description)
+                desc_lbl.setStyleSheet("color: #a9b1d6;")
+                desc_lbl.setWordWrap(True)
+
+                row.addWidget(key_lbl)
+                row.addWidget(desc_lbl, 1)
+                card_layout.addLayout(row)
+
+            layout.addWidget(card)
+
+        layout.addStretch()
+
+    def focus_primary_input(self):
+        self.setFocus()
