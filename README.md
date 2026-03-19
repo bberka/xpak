@@ -26,6 +26,7 @@ Supports pacman (official repos), yay (AUR), and Flatpak — all from a single d
 - Maintenance tools: clean cache, remove orphans, sync databases, fix broken packages
 - In-app update checker (checks GitHub releases)
 - Startup tool check with guided installation for missing dependencies
+- First-run startup update preferences for XPAK and installed packages
 - Source selector dropdown (toggle pacman/AUR/Flatpak per search)
 - Sort search results by name, version, or source
 
@@ -188,9 +189,11 @@ Click **Check for Updates** to scan for available updates using `checkupdates` (
 - **Update Flatpaks** — update all Flatpak apps
 - **Update AUR** — update AUR packages via yay
 
+If enabled in the **Settings** tab on first launch, XPAK also checks this tab in the background on startup and shows a notification dialog when updates are found.
+
 ### Maintenance Tab
 
-- **Check for App Update** — queries GitHub releases to see if a new version of XPAK is available
+- **Check for XPAK Update** — queries GitHub releases to see if a new version of XPAK is available
 - **Update to vX.Y.Z** — appears only when a newer XPAK release is found, runs `install.sh`, then restarts the app automatically
 - **Clean Package Cache** — runs `paccache -r -k 2` (keeps 2 versions of each package)
 - **Remove Orphans** — finds and removes unused dependency packages
@@ -198,6 +201,12 @@ Click **Check for Updates** to scan for available updates using `checkupdates` (
 - **Clean Flatpak Cache** — removes unused Flatpak runtimes
 - **List Explicitly Installed** — shows packages you manually installed (not pulled in as deps)
 - **Fix Broken Packages** — runs `pacman -Dk` to check for dependency issues
+
+### Settings Tab
+
+- Choose whether XPAK should check for XPAK updates on every startup
+- Choose whether XPAK should check for installed package updates on every startup
+- These preferences are also shown automatically the first time you open XPAK
 
 ---
 
@@ -222,7 +231,7 @@ cd ~/.local/lib/xpak
 git pull
 ```
 
-You can also use the **Check for App Update** button in the Maintenance tab. If a new release is found, an **Update** button appears and XPAK can update and restart itself automatically.
+You can also use the **Check for XPAK Update** button in the Maintenance tab. If a new release is found, an **Update** button appears and XPAK can update and restart itself automatically.
 
 ---
 

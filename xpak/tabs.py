@@ -18,6 +18,7 @@ from xpak.workers import (
 from xpak.widgets import TerminalOutput, TerminalPanel, PackageTable, SourceSelector
 from xpak.dialogs import PasswordDialog
 from xpak.logging_service import get_logger, get_log_dir
+from xpak.settings import load_update_preferences, save_update_preferences
 
 
 logger = get_logger("xpak.tabs")
@@ -616,7 +617,6 @@ class UpdatesTab(QWidget):
         self._updates: list[dict] = []
         self._worker: CommandWorker | None = None
         self._build_ui()
-        QTimer.singleShot(400, lambda: self.check_updates(quiet=True))
 
     def _begin_operation(self, description: str) -> bool:
         window = self.window()
@@ -721,6 +721,9 @@ class UpdatesTab(QWidget):
         self._checker.start()
 
     def _on_updates(self, updates: list):
+        self.apply_updates_result(updates, announce=True)
+
+    def apply_updates_result(self, updates: list, announce: bool = False):
         self._updates = updates
         self.table.populate(updates, self.COLUMNS)
         count = len(updates)
@@ -731,7 +734,8 @@ class UpdatesTab(QWidget):
         else:
             self.status_label.setText("System is up to date")
             self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700;")
-        self.terminal.append_success(f"Check complete: {count} updates found")
+        if announce:
+            self.terminal.append_success(f"Check complete: {count} updates found")
 
     def update_all(self):
         dlg = PasswordDialog(self)
@@ -842,14 +846,14 @@ class ToolsTab(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
 
         # App Updates section
-        app_update_label = QLabel("App Updates")
+        app_update_label = QLabel("XPAK Updates")
         app_update_label.setStyleSheet(
             "color: #7aa2f7; font-weight: 700; font-size: 14px;"
         )
         content_layout.addWidget(app_update_label)
 
         app_update_row = QHBoxLayout()
-        self.check_app_update_btn = QPushButton("Check for App Update")
+        self.check_app_update_btn = QPushButton("Check for XPAK Update")
         self.check_app_update_btn.clicked.connect(self.check_app_update)
         self.setFocusProxy(self.check_app_update_btn)
         app_update_row.addWidget(self.check_app_update_btn)
@@ -1016,6 +1020,9 @@ class ToolsTab(QWidget):
             self.terminal.append_error(f"Could not open log folder: {log_dir}")
 
     def _on_update_available(self, version: str, url: str):
+        self.display_app_update_result(version, url, announce=True)
+
+    def display_app_update_result(self, version: str, url: str, announce: bool = False):
         self._pending_app_update_version = version
         self._pending_app_update_url = url
         self.app_update_status.setText(f"Update available: v{version}")
@@ -1023,25 +1030,34 @@ class ToolsTab(QWidget):
         self.update_app_btn.setText(f"Update to v{version}")
         self.update_app_btn.setVisible(True)
         self.update_app_btn.setEnabled(True)
-        self.terminal.append_info(f"New version available: v{version}")
-        self.terminal.append_info(f"Download: {url}")
-        self.terminal.append_info("Use the update button to install and restart automatically.")
+        if announce:
+            self.terminal.append_info(f"New version available: v{version}")
+            self.terminal.append_info(f"Download: {url}")
+            self.terminal.append_info("Use the update button to install and restart automatically.")
 
     def _on_no_update(self):
+        self.display_app_up_to_date(announce=True)
+
+    def display_app_up_to_date(self, announce: bool = False):
         self._pending_app_update_version = None
         self._pending_app_update_url = None
         self.update_app_btn.setVisible(False)
         self.app_update_status.setText("Up to date")
         self.app_update_status.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
-        self.terminal.append_success("XPAK is up to date")
+        if announce:
+            self.terminal.append_success("XPAK is up to date")
 
     def _on_update_check_error(self, msg: str):
+        self.display_app_update_error(msg, announce=True)
+
+    def display_app_update_error(self, msg: str, announce: bool = False):
         self._pending_app_update_version = None
         self._pending_app_update_url = None
         self.update_app_btn.setVisible(False)
         self.app_update_status.setText("Check failed")
         self.app_update_status.setStyleSheet("color: #f7768e; font-size: 12px;")
-        self.terminal.append_error(f"Update check failed: {msg}")
+        if announce:
+            self.terminal.append_error(f"Update check failed: {msg}")
 
     def update_app(self):
         version = self._pending_app_update_version
@@ -1212,6 +1228,76 @@ class ToolsTab(QWidget):
         self._run(["pacman", "-Dk"], sudo=False)
 
 
+class SettingsTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build_ui()
+        self.reload_preferences()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        title = QLabel("Startup Update Checks")
+        title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px;")
+        layout.addWidget(title)
+
+        description = QLabel(
+            "Choose whether XPAK should check for its own updates and installed package "
+            "updates each time it starts."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("color: #565f89; font-size: 12px;")
+        layout.addWidget(description)
+
+        self.auto_check_xpak = QCheckBox("Check for XPAK version updates on startup")
+        self.auto_check_xpak.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.auto_check_xpak)
+
+        self.auto_check_packages = QCheckBox("Check for installed apps and package updates on startup")
+        self.auto_check_packages.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.auto_check_packages)
+
+        action_row = QHBoxLayout()
+        self.save_btn = QPushButton("Save Settings")
+        self.save_btn.setObjectName("primary")
+        self.save_btn.clicked.connect(self.save_preferences)
+        self.setFocusProxy(self.save_btn)
+        action_row.addWidget(self.save_btn)
+        action_row.addStretch()
+
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #565f89; font-size: 12px;")
+        action_row.addWidget(self.status_label)
+        layout.addLayout(action_row)
+        layout.addStretch()
+
+    def focus_primary_input(self):
+        if self.save_btn.isEnabled():
+            self.save_btn.setFocus()
+
+    def set_operation_controls_enabled(self, enabled: bool):
+        self.save_btn.setEnabled(enabled)
+        self.auto_check_xpak.setEnabled(enabled)
+        self.auto_check_packages.setEnabled(enabled)
+
+    def reload_preferences(self):
+        _, auto_check_xpak, auto_check_packages = load_update_preferences()
+        self.auto_check_xpak.setChecked(auto_check_xpak)
+        self.auto_check_packages.setChecked(auto_check_packages)
+        self.status_label.setText("")
+        self.status_label.setStyleSheet("color: #565f89; font-size: 12px;")
+
+    def save_preferences(self):
+        save_update_preferences(
+            self.auto_check_xpak.isChecked(),
+            self.auto_check_packages.isChecked(),
+        )
+        self.status_label.setText("Settings saved")
+        self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
+
+
 class ShortcutsTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1237,7 +1323,8 @@ class ShortcutsTab(QWidget):
                     ("Ctrl+2", "Open Installed"),
                     ("Ctrl+3", "Open Updates"),
                     ("Ctrl+4", "Open Maintenance"),
-                    ("Ctrl+5", "Open Shortcuts"),
+                    ("Ctrl+5", "Open Settings"),
+                    ("Ctrl+6", "Open Shortcuts"),
                 ],
             ),
             (
@@ -1252,7 +1339,8 @@ class ShortcutsTab(QWidget):
                     ("Search", "Ctrl+F focuses the package search input"),
                     ("Installed", "Ctrl+F focuses the installed-package filter"),
                     ("Updates", "Ctrl+F focuses the Check for Updates button"),
-                    ("Maintenance", "Ctrl+F focuses the Check for App Update button"),
+                    ("Maintenance", "Ctrl+F focuses the Check for XPAK Update button"),
+                    ("Settings", "Ctrl+F focuses the Save Settings button"),
                 ],
             ),
         ]

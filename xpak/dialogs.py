@@ -6,11 +6,10 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox, QPushButton, QCheckBox, QFrame, QScrollArea,
     QWidget, QProgressBar, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QSettings
-
 from xpak.workers import CommandWorker
 from xpak.widgets import TerminalOutput
 from xpak.logging_service import get_logger
+from xpak.settings import get_settings
 
 
 logger = get_logger("xpak.dialogs")
@@ -277,12 +276,69 @@ class ToolCheckDialog(QDialog):
 
     def _on_close(self):
         if self._dismiss_check.isChecked():
-            settings = QSettings("xpak", "xpak")
+            settings = get_settings()
             settings.setValue(self.SETTINGS_KEY, True)
         self.accept()
 
     @staticmethod
     def should_show() -> bool:
-        settings = QSettings("xpak", "xpak")
+        settings = get_settings()
         dismissed = settings.value("tool_check_dismissed", False, type=bool)
         return not dismissed
+
+
+class UpdatePreferencesDialog(QDialog):
+    def __init__(
+        self,
+        parent=None,
+        auto_check_xpak: bool = True,
+        auto_check_packages: bool = True,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Startup Update Checks")
+        self.setMinimumWidth(500)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        title = QLabel("Check for updates on startup?")
+        title.setStyleSheet("color: #7aa2f7; font-size: 16px; font-weight: 800;")
+        layout.addWidget(title)
+
+        description = QLabel(
+            "Choose which update checks XPAK should run automatically in the background "
+            "when it starts. You can change this later in the Settings tab."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("color: #565f89; font-size: 12px;")
+        layout.addWidget(description)
+
+        self.xpak_updates_check = QCheckBox("XPAK version updates")
+        self.xpak_updates_check.setChecked(auto_check_xpak)
+        self.xpak_updates_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.xpak_updates_check)
+
+        self.package_updates_check = QCheckBox("Installed apps and package updates")
+        self.package_updates_check.setChecked(auto_check_packages)
+        self.package_updates_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.package_updates_check)
+
+        hint = QLabel(
+            "If updates are found, XPAK will show a notification dialog and keep the result "
+            "visible in the related tab."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #565f89; font-size: 11px;")
+        layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+    def selected_preferences(self) -> tuple[bool, bool]:
+        return (
+            self.xpak_updates_check.isChecked(),
+            self.package_updates_check.isChecked(),
+        )
