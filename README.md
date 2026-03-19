@@ -27,6 +27,7 @@ Supports pacman (official repos), yay (AUR), and Flatpak — all from a single d
 - In-app update checker (checks GitHub releases)
 - Startup tool check with guided installation for missing dependencies
 - First-run startup update preferences for XPAK and installed packages
+- Optional once-per-day update checks with notifications for XPAK and package updates
 - Optional desktop autostart with start-in-tray behavior for KDE Plasma and other desktop environments
 - Source selector dropdown (toggle pacman/AUR/Flatpak per search)
 - Sort search results by name, version, or source
@@ -207,6 +208,7 @@ If enabled in the **Settings** tab on first launch, XPAK also checks this tab in
 
 - Choose whether XPAK should check for XPAK updates on every startup
 - Choose whether XPAK should check for installed package updates on every startup
+- Choose whether automatic update checks should run at most once per day
 - Choose whether XPAK should launch automatically on desktop login
 - Choose whether autostart launches should begin minimized to the system tray
 - These preferences are also shown automatically the first time you open XPAK

@@ -13,8 +13,12 @@ from xpak.logging_service import get_logger
 from xpak.settings import (
     load_startup_preferences,
     load_update_preferences,
+    mark_packages_checked_today,
+    mark_xpak_checked_today,
     save_update_preferences,
     save_startup_preferences,
+    should_run_daily_package_check,
+    should_run_daily_xpak_check,
     sync_autostart_file,
     should_prompt_for_update_preferences,
 )
@@ -212,27 +216,40 @@ class MainWindow(QMainWindow):
         if not should_prompt_for_update_preferences():
             return
 
-        _, auto_check_xpak, auto_check_packages = load_update_preferences()
+        _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
         launch_on_startup, start_to_tray = load_startup_preferences()
         dlg = UpdatePreferencesDialog(
             self,
             auto_check_xpak=auto_check_xpak,
             auto_check_packages=auto_check_packages,
+            check_daily=check_daily,
             launch_on_startup=launch_on_startup,
             start_to_tray=start_to_tray,
         )
         if dlg.exec():
-            selected_xpak, selected_packages, selected_launch, selected_tray = dlg.selected_preferences()
-            save_update_preferences(selected_xpak, selected_packages)
+            (
+                selected_xpak,
+                selected_packages,
+                selected_daily,
+                selected_launch,
+                selected_tray,
+            ) = dlg.selected_preferences()
+            save_update_preferences(selected_xpak, selected_packages, selected_daily)
             save_startup_preferences(selected_launch, selected_tray)
             sync_autostart_file(selected_launch, selected_tray)
 
     def _start_startup_update_checks(self):
-        _, auto_check_xpak, auto_check_packages = load_update_preferences()
-        if auto_check_xpak:
+        _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
+        if auto_check_xpak and self._should_run_xpak_check(check_daily):
             self._run_startup_xpak_update_check()
-        if auto_check_packages:
+        if auto_check_packages and self._should_run_package_check(check_daily):
             self._run_startup_package_update_check()
+
+    def _should_run_xpak_check(self, check_daily: bool) -> bool:
+        return not check_daily or should_run_daily_xpak_check()
+
+    def _should_run_package_check(self, check_daily: bool) -> bool:
+        return not check_daily or should_run_daily_package_check()
 
     def _run_startup_xpak_update_check(self):
         if self._startup_app_checker and self._startup_app_checker.isRunning():
@@ -241,7 +258,7 @@ class MainWindow(QMainWindow):
         self._startup_app_checker = AppUpdateChecker()
         self._startup_app_checker.update_available.connect(self._on_startup_xpak_update_available)
         self._startup_app_checker.no_update.connect(
-            lambda: self.tools_tab.display_app_up_to_date(announce=False)
+            self._on_startup_xpak_no_update
         )
         self._startup_app_checker.error.connect(
             lambda msg: logger.warning("Background XPAK update check failed: %s", msg)
@@ -257,6 +274,7 @@ class MainWindow(QMainWindow):
         self._startup_package_checker.start()
 
     def _on_startup_xpak_update_available(self, version: str, url: str):
+        mark_xpak_checked_today()
         self.tools_tab.display_app_update_result(version, url, announce=False)
         answer = QMessageBox.information(
             self,
@@ -269,7 +287,12 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentWidget(self.tools_tab)
             self._schedule_focus_current_tab_primary_input()
 
+    def _on_startup_xpak_no_update(self):
+        mark_xpak_checked_today()
+        self.tools_tab.display_app_up_to_date(announce=False)
+
     def _on_startup_package_updates_ready(self, updates: list):
+        mark_packages_checked_today()
         self.updates_tab.apply_updates_result(updates, announce=False)
         if not updates:
             return

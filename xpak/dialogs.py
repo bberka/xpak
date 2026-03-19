@@ -293,6 +293,7 @@ class UpdatePreferencesDialog(QDialog):
         parent=None,
         auto_check_xpak: bool = True,
         auto_check_packages: bool = True,
+        check_daily: bool = False,
         launch_on_startup: bool = False,
         start_to_tray: bool = False,
     ):
@@ -327,6 +328,11 @@ class UpdatePreferencesDialog(QDialog):
         self.package_updates_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.package_updates_check)
 
+        self.daily_check_check = QCheckBox("Regularly check updates every day")
+        self.daily_check_check.setChecked(check_daily)
+        self.daily_check_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.daily_check_check)
+
         launch_title = QLabel("System startup")
         launch_title.setStyleSheet("color: #7aa2f7; font-size: 14px; font-weight: 700; margin-top: 6px;")
         layout.addWidget(launch_title)
@@ -344,7 +350,8 @@ class UpdatePreferencesDialog(QDialog):
 
         hint = QLabel(
             "If updates are found, XPAK will show a notification dialog and keep the result "
-            "visible in the related tab. Startup launch uses your desktop autostart folder."
+            "visible in the related tab. Daily checks run at most once per calendar day while XPAK is used. "
+            "Startup launch uses your desktop autostart folder."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #565f89; font-size: 11px;")
@@ -361,10 +368,11 @@ class UpdatePreferencesDialog(QDialog):
         if not enabled:
             self.start_to_tray_check.setChecked(False)
 
-    def selected_preferences(self) -> tuple[bool, bool, bool, bool]:
+    def selected_preferences(self) -> tuple[bool, bool, bool, bool, bool]:
         return (
             self.xpak_updates_check.isChecked(),
             self.package_updates_check.isChecked(),
+            self.daily_check_check.isChecked(),
             self.launch_on_startup_check.isChecked(),
             self.start_to_tray_check.isChecked(),
         )

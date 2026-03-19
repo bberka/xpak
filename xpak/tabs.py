@@ -1250,8 +1250,8 @@ class SettingsTab(QWidget):
         layout.addWidget(title)
 
         description = QLabel(
-            "Choose whether XPAK should check for updates at startup and whether it "
-            "should launch automatically when your desktop session starts."
+            "Choose whether XPAK should check for updates at startup, limit those checks "
+            "to once per day, and whether it should launch automatically when your desktop session starts."
         )
         description.setWordWrap(True)
         description.setStyleSheet("color: #565f89; font-size: 12px;")
@@ -1264,6 +1264,10 @@ class SettingsTab(QWidget):
         self.auto_check_packages = QCheckBox("Check for installed apps and package updates on startup")
         self.auto_check_packages.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.auto_check_packages)
+
+        self.check_daily = QCheckBox("Regularly check updates every day")
+        self.check_daily.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.check_daily)
 
         startup_title = QLabel("Desktop Startup")
         startup_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
@@ -1300,6 +1304,7 @@ class SettingsTab(QWidget):
         self.save_btn.setEnabled(enabled)
         self.auto_check_xpak.setEnabled(enabled)
         self.auto_check_packages.setEnabled(enabled)
+        self.check_daily.setEnabled(enabled)
         self.launch_on_startup.setEnabled(enabled)
         self.start_to_tray.setEnabled(enabled and self.launch_on_startup.isChecked())
 
@@ -1309,10 +1314,11 @@ class SettingsTab(QWidget):
             self.start_to_tray.setChecked(False)
 
     def reload_preferences(self):
-        _, auto_check_xpak, auto_check_packages = load_update_preferences()
+        _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
         launch_on_startup, start_to_tray = load_startup_preferences()
         self.auto_check_xpak.setChecked(auto_check_xpak)
         self.auto_check_packages.setChecked(auto_check_packages)
+        self.check_daily.setChecked(check_daily)
         self.launch_on_startup.setChecked(launch_on_startup)
         self.start_to_tray.setChecked(launch_on_startup and start_to_tray)
         self._sync_startup_controls(launch_on_startup)
@@ -1325,6 +1331,7 @@ class SettingsTab(QWidget):
         save_update_preferences(
             self.auto_check_xpak.isChecked(),
             self.auto_check_packages.isChecked(),
+            self.check_daily.isChecked(),
         )
         save_startup_preferences(launch_on_startup, start_to_tray)
         sync_autostart_file(launch_on_startup, start_to_tray)
