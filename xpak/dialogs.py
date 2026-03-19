@@ -299,6 +299,7 @@ class UpdatePreferencesDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Startup Preferences")
         self.setMinimumWidth(500)
+        self.setMinimumHeight(420)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
