@@ -108,6 +108,7 @@ class TerminalPanel(QWidget):
 class PackageTable(QTableWidget):
     def __init__(self, columns: list, parent=None):
         super().__init__(parent)
+        self._allow_header_sorting = True
         self.setColumnCount(len(columns))
         self.setHorizontalHeaderLabels(columns)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -124,6 +125,7 @@ class PackageTable(QTableWidget):
 
     def populate(self, packages: list, columns: list):
         """Populate table rows. Stores the full package dict in UserRole on column 0."""
+        was_sorting_enabled = self.isSortingEnabled()
         self.setSortingEnabled(False)
         self.setRowCount(0)
         for pkg in packages:
@@ -139,7 +141,11 @@ class PackageTable(QTableWidget):
                 if col.lower() == "source":
                     item.setForeground(QColor(self._source_color(val)))
                 self.setItem(row, col_idx, item)
-        self.setSortingEnabled(True)
+        self.setSortingEnabled(was_sorting_enabled and self._allow_header_sorting)
+
+    def set_header_sorting_enabled(self, enabled: bool):
+        self._allow_header_sorting = enabled
+        self.setSortingEnabled(enabled)
 
     @staticmethod
     def _source_color(source: str) -> str:

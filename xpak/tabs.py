@@ -117,6 +117,7 @@ class SearchTab(QWidget):
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.table = PackageTable(self.COLUMNS)
+        self.table.set_header_sorting_enabled(False)
         self.table.selectionModel().selectionChanged.connect(self._on_selection)
         splitter.addWidget(self.table)
 
