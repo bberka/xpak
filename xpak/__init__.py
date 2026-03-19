@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.4.0"
 APP_NAME = "XPAK"
 APP_ROOT = Path(__file__).resolve().parent.parent
 APP_ENTRYPOINT = APP_ROOT / "xpak.py"

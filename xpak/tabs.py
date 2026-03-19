@@ -26,7 +26,7 @@ logger = get_logger("xpak.tabs")
 class SearchTab(QWidget):
     log_message = pyqtSignal(str, str)
 
-    COLUMNS = ["Name", "Version", "Source", "Votes", "Description"]
+    COLUMNS = ["Name", "Version", "Source", "Repo", "Votes", "Description"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -94,7 +94,7 @@ class SearchTab(QWidget):
         sort_lbl = QLabel("Sort by:")
         sort_lbl.setStyleSheet("color: #565f89; font-size: 12px;")
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["Relevance", "Name", "Version", "Source", "Votes"])
+        self.sort_combo.addItems(["Relevance", "Name", "Version", "Source", "Repo", "Votes"])
         self.sort_combo.currentTextChanged.connect(self._apply_sort)
 
         order_lbl = QLabel("Order:")

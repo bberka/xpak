@@ -250,6 +250,7 @@ class SearchWorker(QThread):
                         "version": pkg.get("Version", ""),
                         "description": pkg.get("Description", "") or "",
                         "source": "aur",
+                        "repo": "aur",
                         "installed": name in installed,
                         "votes": str(pkg.get("NumVotes", 0)),
                     }
@@ -285,6 +286,7 @@ class SearchWorker(QThread):
                             "version": parts[2].strip() if len(parts) > 2 else "",
                             "description": parts[3].strip() if len(parts) > 3 else "",
                             "source": "flatpak",
+                            "repo": "flatpak",
                             "installed": self._is_flatpak_installed(parts[0].strip()),
                             "votes": "",
                         }
