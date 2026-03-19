@@ -645,6 +645,7 @@ class UpdatesTab(QWidget):
 
         self.check_btn.setEnabled(enabled and not checker_busy)
         self.update_all_btn.setEnabled(enabled and not worker_busy and has_updates)
+        self.update_pacman_btn.setEnabled(enabled and not worker_busy)
         self.update_flatpak_btn.setEnabled(
             enabled and not worker_busy and shutil.which("flatpak") is not None
         )
@@ -667,6 +668,10 @@ class UpdatesTab(QWidget):
         self.update_all_btn.setEnabled(False)
         self.update_all_btn.clicked.connect(self.update_all)
 
+        self.update_pacman_btn = QPushButton("Update Pacman")
+        self.update_pacman_btn.setEnabled(True)
+        self.update_pacman_btn.clicked.connect(self.update_pacman)
+
         self.update_flatpak_btn = QPushButton("Update Flatpaks")
         self.update_flatpak_btn.setObjectName("success")
         self.update_flatpak_btn.setEnabled(shutil.which("flatpak") is not None)
@@ -681,6 +686,7 @@ class UpdatesTab(QWidget):
 
         toolbar.addWidget(self.check_btn)
         toolbar.addWidget(self.update_all_btn)
+        toolbar.addWidget(self.update_pacman_btn)
         toolbar.addWidget(self.update_flatpak_btn)
         toolbar.addWidget(self.update_aur_btn)
         toolbar.addStretch()
@@ -749,6 +755,14 @@ class UpdatesTab(QWidget):
             return
         password = dlg.password()
         self.terminal.append_info("Starting full system update")
+        self._run_update(["pacman", "-Syu", "--noconfirm"], sudo=True, password=password)
+
+    def update_pacman(self):
+        dlg = PasswordDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        password = dlg.password()
+        self.terminal.append_info("Updating Pacman packages")
         self._run_update(["pacman", "-Syu", "--noconfirm"], sudo=True, password=password)
 
     def update_flatpak(self):
