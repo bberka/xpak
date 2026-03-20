@@ -22,16 +22,16 @@ def main():
     install_exception_hooks()
     logger = get_logger("xpak.app")
 
-    start_in_tray = (
-        should_start_in_tray_from_args(sys.argv[1:])
-        and QSystemTrayIcon.isSystemTrayAvailable()
-    )
     restarting = is_restart_launch_from_args(sys.argv[1:])
     argv = [sys.argv[0], *strip_internal_args(sys.argv[1:])]
 
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+    start_in_tray = (
+        should_start_in_tray_from_args(sys.argv[1:])
+        and QSystemTrayIcon.isSystemTrayAvailable()
+    )
 
     single_instance = SingleInstanceManager(APP_NAME)
     if not restarting and single_instance.activate_existing_instance():
