@@ -37,7 +37,7 @@ def main():
     if not restarting and single_instance.activate_existing_instance():
         logger.info("Activation forwarded to existing instance, exiting")
         sys.exit(0)
-    if not single_instance.start(retry_timeout_ms=3000 if restarting else 0):
+    if not single_instance.start(retry_timeout_ms=10000 if restarting else 0):
         logger.warning("Continuing without single-instance enforcement")
     app.aboutToQuit.connect(single_instance.stop)
 

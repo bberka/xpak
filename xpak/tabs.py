@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
-from xpak import APP_ENTRYPOINT, APP_ROOT, INSTALL_SCRIPT
+from xpak import APP_ROOT, INSTALL_SCRIPT
 from xpak.workers import (
     CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker
 )
@@ -19,6 +19,7 @@ from xpak.widgets import TerminalOutput, TerminalPanel, PackageTable, SourceSele
 from xpak.dialogs import PasswordDialog
 from xpak.logging_service import get_logger, get_log_dir
 from xpak.settings import (
+    build_launch_command,
     load_startup_preferences,
     load_update_preferences,
     RESTART_INSTANCE_ARG,
@@ -1210,16 +1211,18 @@ class ToolsTab(QWidget):
         self.set_operation_controls_enabled(True)
 
     def _restart_application(self):
-        if not APP_ENTRYPOINT.is_file():
-            self.terminal.append_error(f"Could not restart automatically: missing {APP_ENTRYPOINT}")
-            self.app_update_status.setText("Updated, restart manually")
-            self.app_update_status.setStyleSheet("color: #e0af68; font-weight: 700; font-size: 12px;")
-            self.set_operation_controls_enabled(True)
-            return
+        launch_cmd = [
+            *build_launch_command(sys.argv[1:], preserve_start_in_tray=True),
+            RESTART_INSTANCE_ARG,
+        ]
+
+        main_window = self.window()
+        if main_window and hasattr(main_window, "prepare_for_restart"):
+            main_window.prepare_for_restart()
 
         try:
             subprocess.Popen(
-                [sys.executable, str(APP_ENTRYPOINT), RESTART_INSTANCE_ARG, *sys.argv[1:]],
+                launch_cmd,
                 cwd=str(APP_ROOT),
                 start_new_session=True,
             )

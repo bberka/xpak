@@ -119,6 +119,21 @@ def should_start_in_tray_from_args(argv: list[str]) -> bool:
     return launch_on_startup and start_to_tray
 
 
+def build_launch_command(
+    argv: list[str] | None = None,
+    *,
+    preserve_start_in_tray: bool = False,
+) -> list[str]:
+    args = list(argv or [])
+    if preserve_start_in_tray:
+        args = [arg for arg in args if arg != RESTART_INSTANCE_ARG]
+    else:
+        args = strip_internal_args(args)
+    if DEFAULT_LAUNCHER.is_file():
+        return [str(DEFAULT_LAUNCHER), *args]
+    return [sys.executable, str(APP_ENTRYPOINT), *args]
+
+
 def strip_internal_args(argv: list[str]) -> list[str]:
     return [arg for arg in argv if arg not in {"--start-in-tray", RESTART_INSTANCE_ARG}]
 
@@ -128,10 +143,7 @@ def is_restart_launch_from_args(argv: list[str]) -> bool:
 
 
 def _build_autostart_exec_command(start_to_tray: bool) -> str:
-    if DEFAULT_LAUNCHER.is_file():
-        parts = [str(DEFAULT_LAUNCHER)]
-    else:
-        parts = [sys.executable, str(APP_ENTRYPOINT)]
+    parts = build_launch_command()
 
     if start_to_tray:
         parts.append("--start-in-tray")

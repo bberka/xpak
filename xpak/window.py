@@ -375,6 +375,11 @@ class MainWindow(QMainWindow):
             self._tray_icon.hide()
         self.close()
 
+    def prepare_for_restart(self):
+        self._close_to_tray_enabled = False
+        if self._tray_icon:
+            self._tray_icon.hide()
+
     def bring_to_front(self):
         if self._tray_icon and not self.isVisible():
             self._show_from_tray()
