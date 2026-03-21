@@ -7,7 +7,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QSplitter, QProgressBar,
     QMessageBox, QDialog, QTextEdit, QFrame, QApplication,
-    QAbstractItemView, QCheckBox, QScrollArea,
+    QAbstractItemView, QCheckBox, QScrollArea, QTableWidget,
+    QTableWidgetItem, QHeaderView,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
@@ -1404,6 +1405,7 @@ class ToolsTab(QWidget):
 class SettingsTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._available_repos: list[str] = []
         self._build_ui()
         self.reload_preferences()
 
@@ -1440,39 +1442,6 @@ class SettingsTab(QWidget):
         self.exclude_system_updates.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.exclude_system_updates)
 
-        repo_title = QLabel("Pacman Repository Filters")
-        repo_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
-        layout.addWidget(repo_title)
-
-        repo_description = QLabel(
-            "Limit pacman search results, installed package lists, and update checks to specific repositories. "
-            "Use comma-separated repository names like core, extra, or multilib."
-        )
-        repo_description.setWordWrap(True)
-        repo_description.setStyleSheet("color: #565f89; font-size: 12px;")
-        layout.addWidget(repo_description)
-
-        self.available_repos_label = QLabel("")
-        self.available_repos_label.setWordWrap(True)
-        self.available_repos_label.setStyleSheet("color: #565f89; font-size: 11px;")
-        layout.addWidget(self.available_repos_label)
-
-        include_label = QLabel("Only include these pacman repos")
-        include_label.setStyleSheet("color: #a9b1d6; font-size: 12px;")
-        layout.addWidget(include_label)
-
-        self.include_repos_input = QLineEdit()
-        self.include_repos_input.setPlaceholderText("Leave empty to allow all repos")
-        layout.addWidget(self.include_repos_input)
-
-        exclude_label = QLabel("Exclude these pacman repos")
-        exclude_label.setStyleSheet("color: #a9b1d6; font-size: 12px;")
-        layout.addWidget(exclude_label)
-
-        self.exclude_repos_input = QLineEdit()
-        self.exclude_repos_input.setPlaceholderText("Comma-separated repo names to skip")
-        layout.addWidget(self.exclude_repos_input)
-
         startup_title = QLabel("Desktop Startup")
         startup_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
         layout.addWidget(startup_title)
@@ -1485,6 +1454,42 @@ class SettingsTab(QWidget):
         self.start_to_tray = QCheckBox("If launched on startup, start minimized to tray")
         self.start_to_tray.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.start_to_tray)
+
+        repo_title = QLabel("Pacman Repository Filters")
+        repo_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
+        layout.addWidget(repo_title)
+
+        repo_description = QLabel(
+            "Choose which pacman repositories XPAK should use for search, installed packages, and update checks. "
+            "Detected repositories are selected by default."
+        )
+        repo_description.setWordWrap(True)
+        repo_description.setStyleSheet("color: #565f89; font-size: 12px;")
+        layout.addWidget(repo_description)
+
+        repo_actions = QHBoxLayout()
+        self.available_repos_label = QLabel("")
+        self.available_repos_label.setStyleSheet("color: #565f89; font-size: 11px;")
+        repo_actions.addWidget(self.available_repos_label)
+        repo_actions.addStretch()
+
+        self.select_all_repos_btn = QPushButton("Select All")
+        self.select_all_repos_btn.clicked.connect(self._select_all_repos)
+        repo_actions.addWidget(self.select_all_repos_btn)
+        layout.addLayout(repo_actions)
+
+        self.repo_table = QTableWidget(0, 2)
+        self.repo_table.setHorizontalHeaderLabels(["Use", "Repository"])
+        self.repo_table.verticalHeader().setVisible(False)
+        self.repo_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.repo_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.repo_table.setAlternatingRowColors(True)
+        self.repo_table.setShowGrid(False)
+        self.repo_table.horizontalHeader().setStretchLastSection(True)
+        self.repo_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.repo_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.repo_table.setMaximumHeight(220)
+        layout.addWidget(self.repo_table)
 
         action_row = QHBoxLayout()
         self.save_btn = QPushButton("Save Settings")
@@ -1510,10 +1515,10 @@ class SettingsTab(QWidget):
         self.auto_check_packages.setEnabled(enabled)
         self.check_daily.setEnabled(enabled)
         self.exclude_system_updates.setEnabled(enabled)
-        self.include_repos_input.setEnabled(enabled)
-        self.exclude_repos_input.setEnabled(enabled)
         self.launch_on_startup.setEnabled(enabled)
         self.start_to_tray.setEnabled(enabled and self.launch_on_startup.isChecked())
+        self.select_all_repos_btn.setEnabled(enabled)
+        self.repo_table.setEnabled(enabled)
 
     def _sync_startup_controls(self, enabled: bool):
         self.start_to_tray.setEnabled(enabled and self.save_btn.isEnabled())
@@ -1522,22 +1527,22 @@ class SettingsTab(QWidget):
 
     def reload_preferences(self):
         _, auto_check_xpak, auto_check_packages, check_daily, exclude_system_updates = load_update_preferences()
-        include_repos, exclude_repos = load_repo_preferences()
+        include_repos, _ = load_repo_preferences()
         launch_on_startup, start_to_tray = load_startup_preferences()
         self.auto_check_xpak.setChecked(auto_check_xpak)
         self.auto_check_packages.setChecked(auto_check_packages)
         self.check_daily.setChecked(check_daily)
         self.exclude_system_updates.setChecked(exclude_system_updates)
-        self.include_repos_input.setText(", ".join(include_repos))
-        self.exclude_repos_input.setText(", ".join(exclude_repos))
         self.launch_on_startup.setChecked(launch_on_startup)
         self.start_to_tray.setChecked(launch_on_startup and start_to_tray)
         self._sync_startup_controls(launch_on_startup)
-        available_repos = get_available_pacman_repos()
-        if available_repos:
-            self.available_repos_label.setText(f"Detected repos: {', '.join(available_repos)}")
+        self._available_repos = get_available_pacman_repos()
+        repo_rows = self._available_repos or include_repos
+        self._populate_repo_table(repo_rows, include_repos)
+        if self._available_repos:
+            self.available_repos_label.setText(f"{len(self._available_repos)} repos detected")
         else:
-            self.available_repos_label.setText("Detected repos: unavailable")
+            self.available_repos_label.setText("Detected repos unavailable")
         self.status_label.setText("")
         self.status_label.setStyleSheet("color: #565f89; font-size: 12px;")
 
@@ -1550,10 +1555,17 @@ class SettingsTab(QWidget):
             self.check_daily.isChecked(),
             self.exclude_system_updates.isChecked(),
         )
-        save_repo_preferences(
-            self._parse_repo_input(self.include_repos_input.text()),
-            self._parse_repo_input(self.exclude_repos_input.text()),
-        )
+        selected_repos = self._selected_repo_names()
+        if self.repo_table.rowCount() > 0 and not selected_repos:
+            self.status_label.setText("Select at least one pacman repository")
+            self.status_label.setStyleSheet("color: #f7768e; font-weight: 700; font-size: 12px;")
+            return
+
+        repos_to_save = selected_repos
+        if self._available_repos and len(selected_repos) == len(self._available_repos):
+            repos_to_save = []
+
+        save_repo_preferences(repos_to_save, [])
         save_startup_preferences(launch_on_startup, start_to_tray)
         sync_autostart_file(launch_on_startup, start_to_tray)
         window = self.window()
@@ -1566,16 +1578,52 @@ class SettingsTab(QWidget):
         self.status_label.setText("Settings saved")
         self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
 
-    @staticmethod
-    def _parse_repo_input(text: str) -> list[str]:
-        repos = []
+    def _populate_repo_table(self, repos: list[str], selected_repos: list[str]):
+        normalized_repos = []
         seen = set()
-        for item in text.split(","):
-            repo = item.strip().lower()
-            if repo and repo not in seen:
-                repos.append(repo)
-                seen.add(repo)
+        for repo in repos:
+            name = str(repo).strip().lower()
+            if name and name not in seen:
+                normalized_repos.append(name)
+                seen.add(name)
+
+        selected_set = set(selected_repos)
+        use_defaults = not selected_set
+
+        self.repo_table.setRowCount(len(normalized_repos))
+        for row, repo in enumerate(normalized_repos):
+            checkbox_item = QTableWidgetItem()
+            checkbox_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            checkbox_item.setCheckState(
+                Qt.CheckState.Checked
+                if use_defaults or repo in selected_set
+                else Qt.CheckState.Unchecked
+            )
+            self.repo_table.setItem(row, 0, checkbox_item)
+
+            name_item = QTableWidgetItem(repo)
+            name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.repo_table.setItem(row, 1, name_item)
+
+    def _selected_repo_names(self) -> list[str]:
+        repos = []
+        for row in range(self.repo_table.rowCount()):
+            checkbox_item = self.repo_table.item(row, 0)
+            name_item = self.repo_table.item(row, 1)
+            if not checkbox_item or not name_item:
+                continue
+            if checkbox_item.checkState() == Qt.CheckState.Checked:
+                repos.append(name_item.text().strip().lower())
         return repos
+
+    def _select_all_repos(self):
+        for row in range(self.repo_table.rowCount()):
+            item = self.repo_table.item(row, 0)
+            if item is not None:
+                item.setCheckState(Qt.CheckState.Checked)
 
 
 class ShortcutsTab(QWidget):
