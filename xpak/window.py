@@ -34,6 +34,10 @@ class MainWindow(QMainWindow):
         self._initial_focus_scheduled = False
         self._startup_package_checker: UpdateChecker | None = None
         self._startup_app_checker: AppUpdateChecker | None = None
+        self._startup_xpak_check_pending = False
+        self._startup_xpak_dialog_visible = False
+        self._startup_package_updates_ready = False
+        self._startup_pending_package_updates: list = []
         self._tray_icon: QSystemTrayIcon | None = None
         self._tray_menu: QMenu | None = None
         self._start_hidden_to_tray = False
@@ -240,9 +244,17 @@ class MainWindow(QMainWindow):
 
     def _start_startup_update_checks(self):
         _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
-        if auto_check_xpak and self._should_run_xpak_check(check_daily):
+        should_check_xpak = auto_check_xpak and self._should_run_xpak_check(check_daily)
+        should_check_packages = auto_check_packages and self._should_run_package_check(check_daily)
+
+        self._startup_xpak_check_pending = should_check_xpak
+        self._startup_xpak_dialog_visible = False
+        self._startup_package_updates_ready = False
+        self._startup_pending_package_updates = []
+
+        if should_check_xpak:
             self._run_startup_xpak_update_check()
-        if auto_check_packages and self._should_run_package_check(check_daily):
+        if should_check_packages:
             self._run_startup_package_update_check()
 
     def _should_run_xpak_check(self, check_daily: bool) -> bool:
@@ -257,12 +269,9 @@ class MainWindow(QMainWindow):
 
         self._startup_app_checker = AppUpdateChecker()
         self._startup_app_checker.update_available.connect(self._on_startup_xpak_update_available)
-        self._startup_app_checker.no_update.connect(
-            self._on_startup_xpak_no_update
-        )
-        self._startup_app_checker.error.connect(
-            lambda msg: logger.warning("Background XPAK update check failed: %s", msg)
-        )
+        self._startup_app_checker.no_update.connect(self._on_startup_xpak_no_update)
+        self._startup_app_checker.error.connect(self._on_startup_xpak_check_error)
+        self._startup_app_checker.finished.connect(self._on_startup_xpak_check_finished)
         self._startup_app_checker.start()
 
     def _run_startup_package_update_check(self):
@@ -271,11 +280,13 @@ class MainWindow(QMainWindow):
 
         self._startup_package_checker = UpdateChecker()
         self._startup_package_checker.updates_ready.connect(self._on_startup_package_updates_ready)
+        self._startup_package_checker.finished.connect(self._on_startup_package_check_finished)
         self._startup_package_checker.start()
 
     def _on_startup_xpak_update_available(self, version: str, url: str):
         mark_xpak_checked_today()
         self.tools_tab.display_app_update_result(version, url, announce=False)
+        self._startup_xpak_dialog_visible = True
         answer = QMessageBox.information(
             self,
             "XPAK Update Available",
@@ -283,17 +294,46 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
+        self._startup_xpak_dialog_visible = False
         if answer == QMessageBox.StandardButton.Yes:
             self.tabs.setCurrentWidget(self.tools_tab)
             self._schedule_focus_current_tab_primary_input()
+        self._maybe_show_startup_package_dialog()
 
     def _on_startup_xpak_no_update(self):
         mark_xpak_checked_today()
         self.tools_tab.display_app_up_to_date(announce=False)
+        self._maybe_show_startup_package_dialog()
+
+    def _on_startup_xpak_check_error(self, msg: str):
+        logger.warning("Background XPAK update check failed: %s", msg)
+        self.tools_tab.display_app_update_error(msg, announce=False)
+        self._maybe_show_startup_package_dialog()
+
+    def _on_startup_xpak_check_finished(self):
+        self._startup_xpak_check_pending = False
+        self._startup_app_checker = None
+        self._maybe_show_startup_package_dialog()
 
     def _on_startup_package_updates_ready(self, updates: list):
         mark_packages_checked_today()
         self.updates_tab.apply_updates_result(updates, announce=False)
+        self._startup_pending_package_updates = updates
+        self._startup_package_updates_ready = True
+        self._maybe_show_startup_package_dialog()
+
+    def _on_startup_package_check_finished(self):
+        self._startup_package_checker = None
+
+    def _maybe_show_startup_package_dialog(self):
+        if not self._startup_package_updates_ready:
+            return
+        if self._startup_xpak_check_pending or self._startup_xpak_dialog_visible:
+            return
+
+        updates = self._startup_pending_package_updates
+        self._startup_package_updates_ready = False
+        self._startup_pending_package_updates = []
         if not updates:
             return
 
