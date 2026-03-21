@@ -14,6 +14,9 @@ Supports pacman (official repos), yay (AUR), and Flatpak — all from a single d
 ![XPAK Screenshot 2](images/2.png)
 ![XPAK Screenshot 3](images/3.png)
 ![XPAK Screenshot 4](images/4.png)
+![XPAK Screenshot 5](images/5.png)
+![XPAK Screenshot 6](images/6.png)
+
 
 ---
 
