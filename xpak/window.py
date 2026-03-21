@@ -218,13 +218,14 @@ class MainWindow(QMainWindow):
         if not should_prompt_for_update_preferences():
             return
 
-        _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
+        _, auto_check_xpak, auto_check_packages, check_daily, exclude_system_updates = load_update_preferences()
         launch_on_startup, start_to_tray = load_startup_preferences()
         dlg = UpdatePreferencesDialog(
             self,
             auto_check_xpak=auto_check_xpak,
             auto_check_packages=auto_check_packages,
             check_daily=check_daily,
+            exclude_system_updates=exclude_system_updates,
             launch_on_startup=launch_on_startup,
             start_to_tray=start_to_tray,
         )
@@ -233,15 +234,21 @@ class MainWindow(QMainWindow):
                 selected_xpak,
                 selected_packages,
                 selected_daily,
+                selected_exclude_system,
                 selected_launch,
                 selected_tray,
             ) = dlg.selected_preferences()
-            save_update_preferences(selected_xpak, selected_packages, selected_daily)
+            save_update_preferences(
+                selected_xpak,
+                selected_packages,
+                selected_daily,
+                selected_exclude_system,
+            )
             save_startup_preferences(selected_launch, selected_tray)
             sync_autostart_file(selected_launch, selected_tray)
 
     def _start_startup_update_checks(self):
-        _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
+        _, auto_check_xpak, auto_check_packages, check_daily, _ = load_update_preferences()
         should_check_xpak = auto_check_xpak and self._should_run_xpak_check(check_daily)
         should_check_packages = auto_check_packages and self._should_run_package_check(check_daily)
 
@@ -274,7 +281,8 @@ class MainWindow(QMainWindow):
         if self._startup_package_checker and self._startup_package_checker.isRunning():
             return
 
-        self._startup_package_checker = UpdateChecker()
+        _, _, _, _, exclude_system_updates = load_update_preferences()
+        self._startup_package_checker = UpdateChecker(exclude_system_updates=exclude_system_updates)
         self._startup_package_checker.updates_ready.connect(self._on_startup_package_updates_ready)
         self._startup_package_checker.finished.connect(self._on_startup_package_check_finished)
         self._startup_package_checker.start()

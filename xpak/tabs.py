@@ -689,7 +689,9 @@ class UpdatesTab(QWidget):
         self._updates: list[dict] = []
         self._filtered_updates: list[dict] = []
         self._worker: CommandWorker | None = None
+        self._exclude_system_updates = False
         self._build_ui()
+        self.reload_preferences()
 
     def _begin_operation(self, description: str) -> bool:
         window = self.window()
@@ -709,10 +711,19 @@ class UpdatesTab(QWidget):
         checker_busy = hasattr(self, "_checker") and self._checker is not None and self._checker.isRunning()
         worker_busy = self._worker is not None and self._worker.isRunning()
         has_updates = bool(self._updates)
+        has_non_system_updates = any(
+            update.get("source") != "pacman" for update in self._updates
+        )
 
         self.check_btn.setEnabled(enabled and not checker_busy)
-        self.update_all_btn.setEnabled(enabled and not worker_busy and has_updates)
-        self.update_pacman_btn.setEnabled(enabled and not worker_busy)
+        self.update_all_btn.setEnabled(
+            enabled and not worker_busy and (
+                has_non_system_updates if self._exclude_system_updates else has_updates
+            )
+        )
+        self.update_pacman_btn.setEnabled(
+            enabled and not worker_busy and not self._exclude_system_updates
+        )
         self.update_flatpak_btn.setEnabled(
             enabled and not worker_busy and shutil.which("flatpak") is not None
         )
@@ -784,6 +795,10 @@ class UpdatesTab(QWidget):
             self.filter_input.setFocus()
             self.filter_input.selectAll()
 
+    def reload_preferences(self):
+        _, _, _, _, self._exclude_system_updates = load_update_preferences()
+        self.set_operation_controls_enabled(True)
+
     def _apply_filter(self):
         query = self.filter_input.text().strip().lower()
         self._filtered_updates = [
@@ -806,7 +821,8 @@ class UpdatesTab(QWidget):
         self.update_all_btn.setEnabled(False)
         self.terminal.append_info("Checking for updates")
 
-        self._checker = UpdateChecker()
+        self.reload_preferences()
+        self._checker = UpdateChecker(exclude_system_updates=self._exclude_system_updates)
         self._checker.updates_ready.connect(self._on_updates)
         self._checker.finished.connect(lambda: (
             self.progress.setVisible(False),
@@ -825,14 +841,24 @@ class UpdatesTab(QWidget):
         if count:
             self.status_label.setText(f"{count} update{'s' if count != 1 else ''} available")
             self.status_label.setStyleSheet("color: #e0af68; font-weight: 700;")
-            self.update_all_btn.setEnabled(True)
         else:
             self.status_label.setText("System is up to date")
             self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700;")
+        self.set_operation_controls_enabled(True)
         if announce:
             self.terminal.append_success(f"Check complete: {count} updates found")
 
     def update_all(self):
+        self.reload_preferences()
+        if self._exclude_system_updates:
+            has_flatpak_updates = any(update.get("source") == "flatpak" for update in self._updates)
+            if not has_flatpak_updates:
+                self.terminal.append_error("No non-system updates are available to install.")
+                return
+            self.terminal.append_info("System package updates are excluded; updating Flatpak packages only")
+            self._run_update(["flatpak", "update", "-y"], sudo=False)
+            return
+
         dlg = PasswordDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -841,6 +867,10 @@ class UpdatesTab(QWidget):
         self._run_update(["pacman", "-Syu", "--noconfirm"], sudo=True, password=password)
 
     def update_pacman(self):
+        self.reload_preferences()
+        if self._exclude_system_updates:
+            self.terminal.append_error("System package updates are excluded in Settings.")
+            return
         dlg = PasswordDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1368,6 +1398,10 @@ class SettingsTab(QWidget):
         self.check_daily.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.check_daily)
 
+        self.exclude_system_updates = QCheckBox("Exclude system package updates")
+        self.exclude_system_updates.setStyleSheet("color: #a9b1d6; font-size: 13px;")
+        layout.addWidget(self.exclude_system_updates)
+
         startup_title = QLabel("Desktop Startup")
         startup_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
         layout.addWidget(startup_title)
@@ -1404,6 +1438,7 @@ class SettingsTab(QWidget):
         self.auto_check_xpak.setEnabled(enabled)
         self.auto_check_packages.setEnabled(enabled)
         self.check_daily.setEnabled(enabled)
+        self.exclude_system_updates.setEnabled(enabled)
         self.launch_on_startup.setEnabled(enabled)
         self.start_to_tray.setEnabled(enabled and self.launch_on_startup.isChecked())
 
@@ -1413,11 +1448,12 @@ class SettingsTab(QWidget):
             self.start_to_tray.setChecked(False)
 
     def reload_preferences(self):
-        _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
+        _, auto_check_xpak, auto_check_packages, check_daily, exclude_system_updates = load_update_preferences()
         launch_on_startup, start_to_tray = load_startup_preferences()
         self.auto_check_xpak.setChecked(auto_check_xpak)
         self.auto_check_packages.setChecked(auto_check_packages)
         self.check_daily.setChecked(check_daily)
+        self.exclude_system_updates.setChecked(exclude_system_updates)
         self.launch_on_startup.setChecked(launch_on_startup)
         self.start_to_tray.setChecked(launch_on_startup and start_to_tray)
         self._sync_startup_controls(launch_on_startup)
@@ -1431,12 +1467,15 @@ class SettingsTab(QWidget):
             self.auto_check_xpak.isChecked(),
             self.auto_check_packages.isChecked(),
             self.check_daily.isChecked(),
+            self.exclude_system_updates.isChecked(),
         )
         save_startup_preferences(launch_on_startup, start_to_tray)
         sync_autostart_file(launch_on_startup, start_to_tray)
         window = self.window()
         if hasattr(window, "refresh_tray_preferences"):
             window.refresh_tray_preferences()
+        if hasattr(window, "updates_tab"):
+            window.updates_tab.reload_preferences()
         self.status_label.setText("Settings saved")
         self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
 

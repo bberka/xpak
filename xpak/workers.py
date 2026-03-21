@@ -427,12 +427,17 @@ class InstalledLoader(QThread):
 class UpdateChecker(QThread):
     updates_ready = pyqtSignal(list)
 
+    def __init__(self, exclude_system_updates: bool = False):
+        super().__init__()
+        self.exclude_system_updates = exclude_system_updates
+
     def run(self):
         results = []
         tasks = []
-        logger.info("UpdateChecker starting")
+        logger.info("UpdateChecker starting (exclude_system_updates=%s)", self.exclude_system_updates)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            tasks.append(executor.submit(self._check_pacman_updates))
+            if not self.exclude_system_updates:
+                tasks.append(executor.submit(self._check_pacman_updates))
             if shutil.which("flatpak"):
                 tasks.append(executor.submit(self._check_flatpak_updates))
 
