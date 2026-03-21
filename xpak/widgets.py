@@ -11,6 +11,18 @@ from xpak.logging_service import get_logger
 terminal_logger = get_logger("xpak.terminal")
 
 
+class SortableTableItem(QTableWidgetItem):
+    SORT_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
+    def __lt__(self, other):
+        if isinstance(other, QTableWidgetItem):
+            left = self.data(self.SORT_ROLE)
+            right = other.data(self.SORT_ROLE)
+            if left is not None and right is not None:
+                return left < right
+        return super().__lt__(other)
+
+
 class TerminalOutput(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -134,10 +146,18 @@ class PackageTable(QTableWidget):
             for col_idx, col in enumerate(columns):
                 key = col.lower().replace(" ", "_")
                 val = str(pkg.get(key, pkg.get(col.lower(), "")))
-                item = QTableWidgetItem(val)
+                item = SortableTableItem(val)
                 if col_idx == 0:
                     # Store the full package dict for later retrieval after sorting
                     item.setData(Qt.ItemDataRole.UserRole, pkg)
+                sort_key = f"{key}_bytes"
+                if pkg.get(sort_key) is not None:
+                    item.setData(SortableTableItem.SORT_ROLE, int(pkg[sort_key]))
+                elif key == "votes":
+                    try:
+                        item.setData(SortableTableItem.SORT_ROLE, int(pkg.get("votes", "") or 0))
+                    except ValueError:
+                        pass
                 if col.lower() == "source":
                     item.setForeground(QColor(self._source_color(val)))
                 self.setItem(row, col_idx, item)

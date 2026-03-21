@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from xpak import APP_ROOT, INSTALL_SCRIPT
 from xpak.workers import (
     CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker,
+    format_size_bytes,
     get_pacman_updates,
     get_available_pacman_repos,
 )
@@ -96,7 +97,7 @@ def open_in_file_manager(path: Path) -> bool:
 class SearchTab(QWidget):
     log_message = pyqtSignal(str, str)
 
-    COLUMNS = ["Name", "Version", "Source", "Repo", "Votes", "Description"]
+    COLUMNS = ["Name", "Version", "Source", "Repo", "Votes", "Download Size", "Description"]
     MIN_SEARCH_LENGTH = 2
 
     def __init__(self, parent=None):
@@ -508,7 +509,7 @@ class SearchTab(QWidget):
 
 
 class InstalledTab(QWidget):
-    COLUMNS = ["Name", "Version", "Source", "Repo"]
+    COLUMNS = ["Name", "Version", "Source", "Repo", "Installed Size"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -620,8 +621,7 @@ class InstalledTab(QWidget):
     def _on_loaded(self, packages: list):
         self._packages = packages
         self._apply_filter()
-        total = len(packages)
-        self.count_label.setText(f"{total} packages installed")
+        self._update_count_label()
 
     def _apply_filter(self):
         query = self.filter_input.text().lower()
@@ -632,9 +632,43 @@ class InstalledTab(QWidget):
             and (src == "all" or p["source"].lower() == src)
         ]
         self.table.populate(self._filtered, self.COLUMNS)
-        self.count_label.setText(
-            f"Showing {len(self._filtered)} / {len(self._packages)} packages"
-        )
+        self._update_count_label()
+
+    def _update_count_label(self):
+        filtered_known = [pkg.get("installed_size_bytes") for pkg in self._filtered if pkg.get("installed_size_bytes") is not None]
+        total_known = [pkg.get("installed_size_bytes") for pkg in self._packages if pkg.get("installed_size_bytes") is not None]
+        filtered_size = sum(filtered_known)
+        total_size = sum(total_known)
+        filtered_unknown = len(self._filtered) - len(filtered_known)
+        total_unknown = len(self._packages) - len(total_known)
+        if len(self._filtered) == len(self._packages):
+            if self._packages:
+                label = f"{len(self._packages)} packages installed"
+                if total_known:
+                    label += f" • {format_size_bytes(total_size)} on disk"
+                    if total_unknown:
+                        label += " known"
+                elif total_unknown:
+                    label += " • N/A size"
+                self.count_label.setText(label)
+            else:
+                self.count_label.setText("0 packages installed")
+            return
+
+        label = f"Showing {len(self._filtered)} / {len(self._packages)} packages"
+        if filtered_known:
+            label += f" • {format_size_bytes(filtered_size)} shown"
+            if filtered_unknown:
+                label += " known"
+        elif filtered_unknown:
+            label += " • N/A shown size"
+        if total_known:
+            label += f" • {format_size_bytes(total_size)} total"
+            if total_unknown:
+                label += " known"
+        elif total_unknown:
+            label += " • N/A total size"
+        self.count_label.setText(label)
 
     def remove_selected(self):
         row = self.table.currentRow()
@@ -700,7 +734,7 @@ class InstalledTab(QWidget):
 
 
 class UpdatesTab(QWidget):
-    COLUMNS = ["Name", "Old Version", "New Version", "Source", "Repo"]
+    COLUMNS = ["Name", "Old Version", "New Version", "Source", "Repo", "Download Size"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -818,6 +852,7 @@ class UpdatesTab(QWidget):
             if not query or query in update.get("name", "").lower()
         ]
         self.table.populate(self._filtered_updates, self.COLUMNS)
+        self._update_status_summary()
 
     def check_updates(self, quiet: bool = False):
         window = self.window()
@@ -853,16 +888,59 @@ class UpdatesTab(QWidget):
     def apply_updates_result(self, updates: list, announce: bool = False):
         self._updates = updates
         self._apply_filter()
-        count = len(updates)
+        self.set_operation_controls_enabled(True)
+        if announce:
+            count = len(updates)
+            known_downloads = [update.get("download_size_bytes") for update in updates if update.get("download_size_bytes") is not None]
+            unknown_count = len(updates) - len(known_downloads)
+            total_download = sum(known_downloads)
+            if known_downloads:
+                suffix = " known download" if unknown_count else " total download"
+                self.terminal.append_success(
+                    f"Check complete: {count} updates found • {format_size_bytes(total_download)} {suffix}"
+                )
+            elif unknown_count:
+                self.terminal.append_success(f"Check complete: {count} updates found • N/A download size")
+            else:
+                self.terminal.append_success(f"Check complete: {count} updates found")
+
+    def _update_status_summary(self):
+        count = len(self._filtered_updates)
+        known_downloads = [
+            update.get("download_size_bytes")
+            for update in self._filtered_updates
+            if update.get("download_size_bytes") is not None
+        ]
+        unknown_count = count - len(known_downloads)
+        total_download = sum(known_downloads)
         if count:
-            self.status_label.setText(f"{count} update{'s' if count != 1 else ''} available")
+            label = f"{count} update{'s' if count != 1 else ''} available"
+            if known_downloads:
+                label += f" • {format_size_bytes(total_download)}"
+                label += " known download" if unknown_count else " total download"
+            elif unknown_count:
+                label += " • N/A download size"
+            self.status_label.setText(label)
             self.status_label.setStyleSheet("color: #e0af68; font-weight: 700;")
+        elif self._updates:
+            known_downloads = [
+                update.get("download_size_bytes")
+                for update in self._updates
+                if update.get("download_size_bytes") is not None
+            ]
+            unknown_count = len(self._updates) - len(known_downloads)
+            total_download = sum(known_downloads)
+            label = f"No matching updates • {len(self._updates)} total pending"
+            if known_downloads:
+                label += f" • {format_size_bytes(total_download)}"
+                label += " known download" if unknown_count else " total download"
+            elif unknown_count:
+                label += " • N/A download size"
+            self.status_label.setText(label)
+            self.status_label.setStyleSheet("color: #565f89; font-weight: 700;")
         else:
             self.status_label.setText("System is up to date")
             self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700;")
-        self.set_operation_controls_enabled(True)
-        if announce:
-            self.terminal.append_success(f"Check complete: {count} updates found")
 
     def update_all(self):
         self.reload_preferences()

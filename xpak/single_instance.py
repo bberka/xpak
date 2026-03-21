@@ -43,28 +43,39 @@ class SingleInstanceManager(QObject):
             if not self._server:
                 return False
 
-            if self._server.serverError() != QLocalServer.SocketError.AddressInUseError:
-                logger.error(
-                    "Failed to start single-instance server '%s': %s",
-                    self._server_name,
-                    self._server.errorString(),
-                )
-                return False
+            error = self._server.serverError()
+            error_text = self._server.errorString()
 
+            # Qt's local-server error enum differs between bindings and can be
+            # unreliable for stale Unix socket files, so probe the server name
+            # directly instead of depending on a specific enum value.
             if not self._server_is_active():
-                logger.warning("Removing stale single-instance server '%s'", self._server_name)
+                logger.warning(
+                    "Removing stale single-instance server '%s' after listen failure (%s: %s)",
+                    self._server_name,
+                    error,
+                    error_text,
+                )
                 QLocalServer.removeServer(self._server_name)
                 if self._listen_once():
                     logger.info("Single-instance server recovered on %s", self._server_name)
                     return True
-                continue
+                error = self._server.serverError()
+                error_text = self._server.errorString()
 
             if retry_timeout_ms <= 0 or time.monotonic() >= deadline:
-                logger.warning(
-                    "Single-instance server '%s' is still active",
+                logger.error(
+                    "Failed to start single-instance server '%s': %s (%s)",
                     self._server_name,
+                    error_text,
+                    error,
                 )
                 return False
+
+            logger.warning(
+                "Single-instance server '%s' is still active, retrying",
+                self._server_name,
+            )
 
             time.sleep(max(retry_interval_ms, 1) / 1000)
 

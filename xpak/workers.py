@@ -18,6 +18,96 @@ from xpak.logging_service import get_logger
 logger = get_logger("xpak.workers")
 
 
+_SIZE_UNITS = {
+    "B": 1,
+    "BYTES": 1,
+    "KIB": 1024,
+    "MIB": 1024 ** 2,
+    "GIB": 1024 ** 3,
+    "TIB": 1024 ** 4,
+    "KB": 1000,
+    "MB": 1000 ** 2,
+    "GB": 1000 ** 3,
+    "TB": 1000 ** 4,
+}
+
+
+def parse_size_to_bytes(value: str) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    compact = text.replace(",", "")
+    amount_text = compact
+    unit = "B"
+
+    parts = compact.split()
+    if len(parts) >= 2:
+        amount_text = parts[0]
+        unit = parts[1].upper()
+    else:
+        idx = 0
+        while idx < len(compact) and (compact[idx].isdigit() or compact[idx] in ".+-"):
+            idx += 1
+        amount_text = compact[:idx] or compact
+        unit = (compact[idx:] or "B").upper()
+
+    try:
+        amount = float(amount_text)
+    except ValueError:
+        return None
+
+    multiplier = _SIZE_UNITS.get(unit)
+    if multiplier is None:
+        return None
+    return int(amount * multiplier)
+
+
+def format_size_bytes(num_bytes: int | None) -> str:
+    if num_bytes is None or num_bytes < 0:
+        return "N/A"
+    if num_bytes < 1000:
+        return f"{num_bytes} B"
+
+    value = float(num_bytes)
+    units = ["KB", "MB", "GB", "TB"]
+    for unit in units:
+        value /= 1000.0
+        if value < 1000.0 or unit == units[-1]:
+            break
+    return f"{value:.2f} {unit}"
+
+
+def format_size_value(value: str) -> str:
+    num_bytes = parse_size_to_bytes(value)
+    return format_size_bytes(num_bytes)
+
+
+def _extract_field_value(out: str, field_names: tuple[str, ...]) -> str:
+    for line in out.splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() in field_names:
+            return value.strip()
+    return ""
+
+
+def _select_pacman_info_block(out: str, repo: str = "", local: bool = False) -> str:
+    blocks = [block.strip() for block in out.split("\n\n") if block.strip()]
+    if not blocks:
+        return ""
+
+    if not repo:
+        return blocks[0]
+
+    repo_keys = ("Installed From",) if local else ("Repository",)
+    normalized_repo = repo.strip().lower()
+    for block in blocks:
+        block_repo = _extract_field_value(block, repo_keys).strip().lower()
+        if block_repo == normalized_repo:
+            return block
+    return blocks[0]
+
+
 def _parse_checkupdates_output(out: str) -> list[dict]:
     pkgs = []
     for line in out.strip().splitlines():
@@ -90,6 +180,35 @@ def get_pacman_package_repo(pkg_name: str, local: bool = False) -> str:
     return ""
 
 
+@lru_cache(maxsize=4096)
+def get_pacman_package_size_info(pkg_name: str, repo: str = "", local: bool = False) -> dict[str, str | int | None]:
+    target = f"{repo}/{pkg_name}" if repo and not local else pkg_name
+    cmd = ["pacman", "-Qi" if local else "-Si", target]
+    try:
+        out = subprocess.check_output(
+            cmd,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return {
+            "download_size": "",
+            "download_size_bytes": None,
+            "installed_size": "",
+            "installed_size_bytes": None,
+        }
+
+    block = _select_pacman_info_block(out, repo=repo, local=local)
+    download_size_bytes = parse_size_to_bytes(_extract_field_value(block, ("Download Size",)))
+    installed_size_bytes = parse_size_to_bytes(_extract_field_value(block, ("Installed Size",)))
+    return {
+        "download_size": format_size_bytes(download_size_bytes),
+        "download_size_bytes": download_size_bytes,
+        "installed_size": format_size_bytes(installed_size_bytes),
+        "installed_size_bytes": installed_size_bytes,
+    }
+
+
 @lru_cache(maxsize=512)
 def is_core_system_package(pkg_name: str) -> bool:
     repo = get_pacman_package_repo(pkg_name)
@@ -116,6 +235,7 @@ def get_pacman_updates(
     for pkg in pkgs:
         repo = get_pacman_package_repo(pkg["name"])
         pkg["repo"] = repo
+        pkg.update(get_pacman_package_size_info(pkg["name"], repo=repo, local=False))
 
         if not is_repo_allowed(repo, include_repos, exclude_repos):
             ignored_packages.append(pkg["name"])
@@ -380,6 +500,8 @@ class SearchWorker(QThread):
                         "repo": "aur",
                         "installed": name in installed,
                         "votes": str(pkg.get("NumVotes", 0)),
+                        "download_size": "N/A",
+                        "download_size_bytes": None,
                     }
                 )
             return results
@@ -416,6 +538,8 @@ class SearchWorker(QThread):
                             "repo": "flatpak",
                             "installed": self._is_flatpak_installed(parts[0].strip()),
                             "votes": "",
+                            "download_size": "N/A",
+                            "download_size_bytes": None,
                         }
                     )
             return results
@@ -440,6 +564,7 @@ class SearchWorker(QThread):
             version = parts[1] if len(parts) > 1 else ""
             installed = "[installed]" in line
             name = repo_name.split("/")[-1] if "/" in repo_name else repo_name
+            repo = repo_name.split("/")[0] if "/" in repo_name else source
             results.append(
                 {
                     "name": name,
@@ -447,8 +572,12 @@ class SearchWorker(QThread):
                     "description": desc,
                     "source": source,
                     "installed": installed,
-                    "repo": repo_name.split("/")[0] if "/" in repo_name else source,
+                    "repo": repo,
                     "votes": "",
+                    **(get_pacman_package_size_info(name, repo=repo, local=False) if source == "pacman" else {
+                        "download_size": "N/A",
+                        "download_size_bytes": None,
+                    }),
                 }
             )
             i += 2
@@ -540,6 +669,8 @@ class InstalledLoader(QThread):
                         "source": "pacman",
                         "repo": repo,
                         "description": current.get("description", "").strip(),
+                        "installed_size": format_size_value(current.get("installed_size", "")),
+                        "installed_size_bytes": parse_size_to_bytes(current.get("installed_size", "")),
                     }
                 )
 
@@ -561,6 +692,8 @@ class InstalledLoader(QThread):
                     current["description"] = normalized_value
                 elif normalized_key == "Installed From":
                     current["repo"] = normalized_value
+                elif normalized_key == "Installed Size":
+                    current["installed_size"] = normalized_value
 
             finalize_package()
             return pkgs
@@ -570,7 +703,7 @@ class InstalledLoader(QThread):
     def _list_flatpak(self) -> list:
         try:
             out = subprocess.check_output(
-                ["flatpak", "list", "--app", "--columns=application,name,version"],
+                ["flatpak", "list", "--app", "--columns=application,name,version,size"],
                 text=True,
                 stderr=subprocess.DEVNULL,
             )
@@ -585,6 +718,8 @@ class InstalledLoader(QThread):
                             "version": parts[2].strip() if len(parts) > 2 else "",
                             "source": "flatpak",
                             "description": "",
+                            "installed_size": format_size_value(parts[3].strip() if len(parts) > 3 else ""),
+                            "installed_size_bytes": parse_size_to_bytes(parts[3].strip() if len(parts) > 3 else ""),
                         }
                     )
             return pkgs
@@ -636,7 +771,7 @@ class UpdateChecker(QThread):
     def _check_flatpak_updates(self) -> list:
         try:
             out = subprocess.check_output(
-                ["flatpak", "remote-ls", "--updates", "--columns=application,name,version"],
+                ["flatpak", "remote-ls", "--updates", "--columns=application,name,version,download-size"],
                 text=True,
                 stderr=subprocess.DEVNULL,
             )
@@ -650,6 +785,9 @@ class UpdateChecker(QThread):
                             "old_version": "",
                             "new_version": parts[2].strip() if len(parts) > 2 else "",
                             "source": "flatpak",
+                            "repo": "flatpak",
+                            "download_size": format_size_value(parts[3].strip() if len(parts) > 3 else ""),
+                            "download_size_bytes": parse_size_to_bytes(parts[3].strip() if len(parts) > 3 else ""),
                         }
                     )
             return pkgs
