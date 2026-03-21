@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QSettings
 
-from xpak import APP_DESKTOP_FILE, APP_ENTRYPOINT, APP_ICON_NAME, APP_NAME, APP_ID
+from xpak import APP_DESKTOP_FILE, APP_ENTRYPOINT, APP_ICON_FILE, APP_ICON_NAME, APP_NAME, APP_ID
 
 
 SETTINGS_ORG = "xpak"
@@ -124,7 +124,7 @@ def sync_autostart_file(launch_on_startup: bool, start_to_tray: bool):
                 f"Name={APP_NAME}",
                 f"Comment=Start {APP_NAME} automatically on login",
                 f"Exec={exec_command}",
-                f"Icon={APP_ICON_NAME}",
+                f"Icon={APP_ICON_FILE if APP_ICON_FILE.is_file() else APP_ICON_NAME}",
                 "Terminal=false",
                 "Categories=System;PackageManager;",
                 f"StartupWMClass={APP_ID}",

@@ -68,13 +68,14 @@ success "Launcher created at $LAUNCHER"
 # ── Create .desktop file ───────────────────────────────────────────────────────
 
 mkdir -p "$DESKTOP_DIR"
+ICON_FILE="$INSTALL_DIR/assets/xpak.svg"
 
 cat > "$DESKTOP_FILE" << DESKTOP_EOF
 [Desktop Entry]
 Name=XPAK
 Comment=GUI Package Manager for Arch Linux / CachyOS
 Exec=$LAUNCHER
-Icon=system-software-install
+Icon=$ICON_FILE
 Terminal=false
 Type=Application
 Categories=System;PackageManager;

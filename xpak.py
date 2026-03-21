@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import QApplication, QStyle, QSystemTrayIcon
 from PyQt6.QtGui import QFont, QIcon
 from xpak.styles import STYLESHEET
 from xpak.window import MainWindow
-from xpak import APP_ICON_NAME, APP_ID, APP_NAME
+from xpak import APP_DESKTOP_FILE, APP_ICON_FILE, APP_ICON_NAME, APP_NAME
 from xpak.logging_service import setup_logging, install_exception_hooks, get_logger
 from xpak.single_instance import SingleInstanceManager
 from xpak.settings import (
@@ -28,9 +28,11 @@ def main():
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
-    app.setDesktopFileName(APP_ID)
+    app.setDesktopFileName(APP_DESKTOP_FILE)
 
-    icon = QIcon.fromTheme(APP_ICON_NAME)
+    icon = QIcon(str(APP_ICON_FILE)) if APP_ICON_FILE.is_file() else QIcon()
+    if icon.isNull():
+        icon = QIcon.fromTheme(APP_ICON_NAME)
     if icon.isNull():
         icon = app.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon)
     app.setWindowIcon(icon)
