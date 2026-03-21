@@ -781,6 +781,7 @@ class UpdateChecker(QThread):
                 if parts and parts[0]:
                     pkgs.append(
                         {
+                            "app_id": parts[0].strip(),
                             "name": parts[1].strip() if len(parts) > 1 else parts[0].strip(),
                             "old_version": "",
                             "new_version": parts[2].strip() if len(parts) > 2 else "",

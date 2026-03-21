@@ -740,6 +740,7 @@ class UpdatesTab(QWidget):
         super().__init__(parent)
         self._updates: list[dict] = []
         self._filtered_updates: list[dict] = []
+        self._selected_update: dict | None = None
         self._worker: CommandWorker | None = None
         self._exclude_system_updates = False
         self._include_pacman_repos: list[str] = []
@@ -765,9 +766,11 @@ class UpdatesTab(QWidget):
         checker_busy = hasattr(self, "_checker") and self._checker is not None and self._checker.isRunning()
         worker_busy = self._worker is not None and self._worker.isRunning()
         has_updates = bool(self._updates)
+        has_selected_update = self._selected_update is not None
 
         self.check_btn.setEnabled(enabled and not checker_busy)
         self.update_all_btn.setEnabled(enabled and not worker_busy and has_updates)
+        self.update_selected_btn.setEnabled(enabled and not worker_busy and has_selected_update)
         self.update_pacman_btn.setEnabled(enabled and not worker_busy)
         self.update_flatpak_btn.setEnabled(
             enabled and not worker_busy and shutil.which("flatpak") is not None
@@ -798,7 +801,13 @@ class UpdatesTab(QWidget):
         self.update_all_btn.setEnabled(False)
         self.update_all_btn.clicked.connect(self.update_all)
 
+        self.update_selected_btn = QPushButton("Update Selected")
+        self.update_selected_btn.setObjectName("primary")
+        self.update_selected_btn.setEnabled(False)
+        self.update_selected_btn.clicked.connect(self.update_selected)
+
         self.update_pacman_btn = QPushButton("Update Pacman")
+        self.update_pacman_btn.setObjectName("success")
         self.update_pacman_btn.setEnabled(True)
         self.update_pacman_btn.clicked.connect(self.update_pacman)
 
@@ -808,6 +817,7 @@ class UpdatesTab(QWidget):
         self.update_flatpak_btn.clicked.connect(self.update_flatpak)
 
         self.update_aur_btn = QPushButton("Update AUR")
+        self.update_aur_btn.setObjectName("success")
         self.update_aur_btn.setEnabled(shutil.which("yay") is not None)
         self.update_aur_btn.clicked.connect(self.update_aur)
 
@@ -816,6 +826,7 @@ class UpdatesTab(QWidget):
 
         toolbar.addWidget(self.check_btn)
         toolbar.addWidget(self.update_all_btn)
+        toolbar.addWidget(self.update_selected_btn)
         toolbar.addWidget(self.update_pacman_btn)
         toolbar.addWidget(self.update_flatpak_btn)
         toolbar.addWidget(self.update_aur_btn)
@@ -824,6 +835,7 @@ class UpdatesTab(QWidget):
         layout.addLayout(toolbar)
 
         self.table = PackageTable(self.COLUMNS)
+        self.table.selectionModel().selectionChanged.connect(self._on_selection)
         layout.addWidget(self.table)
 
         self.progress = QProgressBar()
@@ -852,7 +864,16 @@ class UpdatesTab(QWidget):
             if not query or query in update.get("name", "").lower()
         ]
         self.table.populate(self._filtered_updates, self.COLUMNS)
+        self._selected_update = None
+        self.update_selected_btn.setEnabled(False)
         self._update_status_summary()
+
+    def _on_selection(self):
+        row = self.table.currentRow()
+        item = self.table.item(row, 0) if row >= 0 else None
+        pkg = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        self._selected_update = pkg if pkg else None
+        self.set_operation_controls_enabled(True)
 
     def check_updates(self, quiet: bool = False):
         window = self.window()
@@ -954,6 +975,36 @@ class UpdatesTab(QWidget):
         password = dlg.password()
         self.terminal.append_info("Starting full system update")
         self._run_update(["pacman", "-Syu", "--noconfirm"], sudo=True, password=password)
+
+    def update_selected(self):
+        pkg = self._selected_update
+        if not pkg:
+            return
+
+        source = pkg.get("source", "")
+        if source == "flatpak":
+            app_id = pkg.get("app_id") or pkg.get("name", "")
+            if not app_id:
+                self.terminal.append_error("Could not determine the Flatpak app ID for this update.")
+                return
+            self.terminal.append_info(f"Updating selected Flatpak: {pkg.get('name', app_id)}")
+            self._run_update(["flatpak", "update", "-y", app_id], sudo=False)
+            return
+
+        if source == "pacman":
+            name = pkg.get("name", "")
+            if not name:
+                self.terminal.append_error("Could not determine the package name for this update.")
+                return
+            dlg = PasswordDialog(self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            password = dlg.password()
+            self.terminal.append_info(f"Updating selected package: {name}")
+            self._run_update(["pacman", "-S", "--noconfirm", name], sudo=True, password=password)
+            return
+
+        self.terminal.append_error(f"Updating a single {source or 'unknown'} package is not supported yet.")
 
     def update_pacman(self):
         self.reload_preferences()
