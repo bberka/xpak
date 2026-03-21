@@ -84,7 +84,7 @@ def get_pacman_package_repo(pkg_name: str, local: bool = False) -> str:
         return ""
 
     for line in out.splitlines():
-        if line.startswith("Repository"):
+        if line.startswith("Repository") or (local and line.startswith("Installed From")):
             _, _, repo = line.partition(":")
             return repo.strip().lower()
     return ""
@@ -513,30 +513,56 @@ class InstalledLoader(QThread):
     def _list_pacman(self) -> list:
         try:
             out = subprocess.check_output(
-                ["pacman", "-Q"],
+                ["pacman", "-Qi"],
                 text=True,
                 stderr=subprocess.DEVNULL,
             )
             pkgs = []
-            for line in out.strip().splitlines():
-                parts = line.split()
-                if len(parts) >= 2:
-                    repo = get_pacman_package_repo(parts[0], local=True)
-                    if not is_repo_allowed(
-                        repo,
-                        self.include_pacman_repos,
-                        self.exclude_pacman_repos,
-                    ):
-                        continue
-                    pkgs.append(
-                        {
-                            "name": parts[0],
-                            "version": parts[1],
-                            "source": "pacman",
-                            "repo": repo,
-                            "description": "",
-                        }
-                    )
+            current = {}
+
+            def finalize_package() -> None:
+                name = current.get("name", "").strip()
+                if not name:
+                    return
+
+                repo = current.get("repo", "").strip().lower()
+                if not is_repo_allowed(
+                    repo,
+                    self.include_pacman_repos,
+                    self.exclude_pacman_repos,
+                ):
+                    return
+
+                pkgs.append(
+                    {
+                        "name": name,
+                        "version": current.get("version", "").strip(),
+                        "source": "pacman",
+                        "repo": repo,
+                        "description": current.get("description", "").strip(),
+                    }
+                )
+
+            for raw_line in out.splitlines():
+                line = raw_line.rstrip()
+                if not line:
+                    finalize_package()
+                    current = {}
+                    continue
+
+                key, _, value = line.partition(":")
+                normalized_key = key.strip()
+                normalized_value = value.strip()
+                if normalized_key == "Name":
+                    current["name"] = normalized_value
+                elif normalized_key == "Version":
+                    current["version"] = normalized_value
+                elif normalized_key == "Description":
+                    current["description"] = normalized_value
+                elif normalized_key == "Installed From":
+                    current["repo"] = normalized_value
+
+            finalize_package()
             return pkgs
         except Exception:
             return []
