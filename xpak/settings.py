@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QSettings
 
-from xpak import APP_ENTRYPOINT
+from xpak import APP_DESKTOP_FILE, APP_ENTRYPOINT, APP_ICON_NAME, APP_NAME, APP_ID
 
 
 SETTINGS_ORG = "xpak"
@@ -25,7 +25,7 @@ START_TO_TRAY_ON_SYSTEM_STARTUP_KEY = "startup/start_to_tray"
 RESTART_INSTANCE_ARG = "--xpak-restart"
 
 AUTOSTART_DIR = Path.home() / ".config" / "autostart"
-AUTOSTART_FILE = AUTOSTART_DIR / "xpak.desktop"
+AUTOSTART_FILE = AUTOSTART_DIR / APP_DESKTOP_FILE
 DEFAULT_LAUNCHER = Path.home() / ".local" / "bin" / "xpak"
 
 
@@ -121,13 +121,13 @@ def sync_autostart_file(launch_on_startup: bool, start_to_tray: bool):
                 "[Desktop Entry]",
                 "Type=Application",
                 "Version=1.0",
-                "Name=XPAK",
-                "Comment=Start XPAK automatically on login",
+                f"Name={APP_NAME}",
+                f"Comment=Start {APP_NAME} automatically on login",
                 f"Exec={exec_command}",
-                "Icon=system-software-install",
+                f"Icon={APP_ICON_NAME}",
                 "Terminal=false",
                 "Categories=System;PackageManager;",
-                "StartupWMClass=xpak",
+                f"StartupWMClass={APP_ID}",
                 "X-GNOME-Autostart-enabled=true",
                 "",
             ]

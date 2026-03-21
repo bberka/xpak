@@ -80,6 +80,7 @@ Type=Application
 Categories=System;PackageManager;
 Keywords=package;manager;pacman;aur;flatpak;arch;
 StartupWMClass=xpak
+StartupNotify=true
 DESKTOP_EOF
 
 success ".desktop file created at $DESKTOP_FILE"

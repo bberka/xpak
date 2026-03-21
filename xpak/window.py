@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence, QShortcut, QShowEvent
 
-from xpak import APP_NAME, APP_VERSION
+from xpak import APP_ICON_NAME, APP_NAME, APP_VERSION
 from xpak.tabs import SearchTab, InstalledTab, UpdatesTab, ToolsTab, SettingsTab, ShortcutsTab
 from xpak.dialogs import ToolCheckDialog, UpdatePreferencesDialog
 from xpak.workers import UpdateChecker, AppUpdateChecker
@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         self._start_hidden_to_tray = False
         self._close_to_tray_enabled = False
         self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(self._resolve_app_icon())
         self.setMinimumSize(1000, 800)
         self.resize(1200, 800)
         self._build_ui()
@@ -375,10 +376,7 @@ class MainWindow(QMainWindow):
             self._tray_icon.show()
             return
 
-        icon = QIcon.fromTheme("system-software-install")
-        if icon.isNull():
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon)
-
+        icon = self.windowIcon()
         self._tray_icon = QSystemTrayIcon(icon, self)
         self._tray_icon.setToolTip(APP_NAME)
         self._tray_icon.activated.connect(self._on_tray_activated)
@@ -416,6 +414,12 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
         self._schedule_focus_current_tab_primary_input()
+
+    def _resolve_app_icon(self) -> QIcon:
+        icon = QIcon.fromTheme(APP_ICON_NAME)
+        if icon.isNull():
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon)
+        return icon
 
     def _quit_from_tray(self):
         self._close_to_tray_enabled = False
