@@ -105,6 +105,7 @@ class SearchTab(QWidget):
         self._worker: CommandWorker | None = None
         self._search_worker: SearchWorker | None = None
         self._selected_pkg: dict | None = None
+        self._pending_package_ops: list[dict] = []
         self._results: list[dict] = []
         self._sorted_results: list[dict] = []
         self._query: str = ""
@@ -129,14 +130,17 @@ class SearchTab(QWidget):
     def set_operation_controls_enabled(self, enabled: bool):
         search_busy = self._search_worker is not None and self._search_worker.isRunning()
         op_busy = self._worker is not None and self._worker.isRunning()
-        selected_installed = bool(self._selected_pkg and self._selected_pkg.get("installed", False))
+        selected_packages = self._get_selected_packages()
+        installable_selected = [pkg for pkg in selected_packages if not pkg.get("installed", False)]
+        single_selected = len(selected_packages) == 1
+        selected_installed = bool(single_selected and self._selected_pkg and self._selected_pkg.get("installed", False))
 
         self.search_input.setEnabled(enabled and not search_busy)
         self.source_selector.setEnabled(enabled and not search_busy)
         self.search_btn.setEnabled(enabled and not search_busy)
-        self.install_btn.setEnabled(enabled and not op_busy and bool(self._selected_pkg) and not selected_installed)
-        self.remove_btn.setEnabled(enabled and not op_busy and selected_installed)
-        self.info_btn.setEnabled(bool(self._selected_pkg) and not op_busy)
+        self.install_btn.setEnabled(enabled and not op_busy and bool(installable_selected))
+        self.remove_btn.setEnabled(enabled and not op_busy and single_selected and selected_installed)
+        self.info_btn.setEnabled(bool(self._selected_pkg) and single_selected and not op_busy)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -197,6 +201,7 @@ class SearchTab(QWidget):
 
         self.table = PackageTable(self.COLUMNS)
         self.table.set_header_sorting_enabled(False)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.selectionModel().selectionChanged.connect(self._on_selection)
         splitter.addWidget(self.table)
 
@@ -358,12 +363,10 @@ class SearchTab(QWidget):
         self.status_label.setText(f"{len(self._sorted_results)} results")
 
     def _on_selection(self):
-        rows = self.table.selectedItems()
-        if not rows:
-            self.install_btn.setEnabled(False)
-            self.remove_btn.setEnabled(False)
-            self.info_btn.setEnabled(False)
+        packages = self._get_selected_packages()
+        if not packages:
             self._selected_pkg = None
+            self.set_operation_controls_enabled(True)
             return
 
         row = self.table.currentRow()
@@ -372,23 +375,132 @@ class SearchTab(QWidget):
             pkg = item.data(Qt.ItemDataRole.UserRole)
             if pkg:
                 self._selected_pkg = pkg
-                installed = pkg.get("installed", False)
-                self.install_btn.setEnabled(not installed)
-                self.remove_btn.setEnabled(installed)
-                self.info_btn.setEnabled(True)
+                self.set_operation_controls_enabled(True)
                 return
 
         self._selected_pkg = None
+        self.set_operation_controls_enabled(True)
+
+    def _get_selected_packages(self) -> list[dict]:
+        selected_rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
+        packages = []
+        seen = set()
+        for row in selected_rows:
+            item = self.table.item(row, 0)
+            if item is None:
+                continue
+            pkg = item.data(Qt.ItemDataRole.UserRole)
+            if not pkg:
+                continue
+            key = (pkg.get("source", ""), pkg.get("app_id") or pkg.get("name", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            packages.append(pkg)
+        return packages
+
+    def install_package(self):
+        selected_packages = self._get_selected_packages()
+        if not selected_packages:
+            return
+
+        packages_to_install = [pkg for pkg in selected_packages if not pkg.get("installed", False)]
+        if not packages_to_install:
+            self.terminal.append_error("All selected packages are already installed.")
+            return
+
+        if len(selected_packages) > 1:
+            package_list = "\n".join(
+                f"- {pkg['name']} ({pkg['source']})"
+                f"{' [already installed]' if pkg.get('installed', False) else ''}"
+                for pkg in selected_packages
+            )
+            reply = QMessageBox.question(
+                self,
+                "Confirm Install",
+                "Install these selected packages?\n\n"
+                f"{package_list}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        batch_map: dict[str, list[str]] = {}
+        display_map: dict[str, list[str]] = {}
+        for pkg in packages_to_install:
+            source = pkg["source"]
+            target = pkg.get("app_id") if source == "flatpak" else pkg["name"]
+            if not target:
+                continue
+            batch_map.setdefault(source, [])
+            display_map.setdefault(source, [])
+            if target not in batch_map[source]:
+                batch_map[source].append(target)
+                display_map[source].append(pkg["name"])
+
+        if not batch_map:
+            self.terminal.append_error("Could not determine install targets for the selected packages.")
+            return
+
+        aur_password = ""
+        pacman_password = ""
+        if "aur" in batch_map:
+            dlg = PasswordDialog(
+                self,
+                message=(
+                    "yay requires sudo for AUR package operations. "
+                    "Your password will be used to pre-authenticate sudo."
+                ),
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            aur_password = dlg.password()
+        if "pacman" in batch_map:
+            dlg = PasswordDialog(self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            pacman_password = dlg.password()
+
+        pending_ops = []
+        for source, names in batch_map.items():
+            if source == "flatpak":
+                cmd = ["flatpak", "install", "-y", *names]
+                sudo = False
+                password = ""
+                pre_auth = False
+            elif source == "aur":
+                cmd = ["yay", "-S", "--noconfirm", "--answerclean=All", "--answerdiff=None", *names]
+                sudo = False
+                password = aur_password
+                pre_auth = True
+            else:
+                cmd = ["pacman", "-S", "--noconfirm", *names]
+                sudo = True
+                password = pacman_password
+                pre_auth = False
+
+            pending_ops.append(
+                {
+                    "source": source,
+                    "cmd": cmd,
+                    "sudo": sudo,
+                    "password": password,
+                    "pre_auth": pre_auth,
+                    "display_names": display_map[source],
+                    "log_name": f"search:install:{source}:{','.join(names)}",
+                }
+            )
+
+        summary = f"Installing {len(packages_to_install)} package{'s' if len(packages_to_install) != 1 else ''}"
+        if not self._begin_operation(summary):
+            return
+
+        self.progress.setVisible(True)
         self.install_btn.setEnabled(False)
         self.remove_btn.setEnabled(False)
         self.info_btn.setEnabled(False)
-
-    def install_package(self):
-        if not self._selected_pkg:
-            return
-        pkg = self._selected_pkg
-        name = pkg.get("app_id") if pkg["source"] == "flatpak" else pkg["name"]
-        self._run_package_op(pkg["source"], "install", name)
+        self._pending_package_ops = pending_ops
+        self._start_next_package_op()
 
     def remove_package(self):
         if not self._selected_pkg:
@@ -497,14 +609,41 @@ class SearchTab(QWidget):
         self._worker.start()
         self.terminal.set_worker(self._worker)
 
+    def _start_next_package_op(self):
+        if not self._pending_package_ops:
+            self.terminal.set_worker(None)
+            self.progress.setVisible(False)
+            self._end_operation()
+            self.set_operation_controls_enabled(True)
+            return
+
+        op = self._pending_package_ops.pop(0)
+        display_names = ", ".join(op["display_names"])
+        self.terminal.append_info(f"Installing {display_names} via {op['source']}")
+        self._worker = CommandWorker(
+            op["cmd"],
+            sudo=op["sudo"],
+            password=op["password"],
+            pre_auth=op["pre_auth"],
+            log_name=op["log_name"],
+        )
+        self._worker.output_line.connect(self.terminal.append_line)
+        self._worker.finished.connect(self._on_op_finished)
+        self._worker.start()
+        self.terminal.set_worker(self._worker)
+
     def _on_op_finished(self, success: bool, msg: str):
         self.terminal.set_worker(None)
-        self.progress.setVisible(False)
-        self._end_operation()
         if success:
             self.terminal.append_success(msg)
+            if self._pending_package_ops:
+                self._start_next_package_op()
+                return
         else:
             self.terminal.append_error(msg)
+            self._pending_package_ops = []
+        self.progress.setVisible(False)
+        self._end_operation()
         self.set_operation_controls_enabled(True)
 
 
