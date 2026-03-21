@@ -5,6 +5,7 @@ import json
 import tempfile
 import shlex
 import concurrent.futures
+from functools import lru_cache
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
@@ -15,6 +16,68 @@ from xpak.logging_service import get_logger
 
 
 logger = get_logger("xpak.workers")
+
+
+def _parse_checkupdates_output(out: str) -> list[dict]:
+    pkgs = []
+    for line in out.strip().splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            pkgs.append(
+                {
+                    "name": parts[0],
+                    "old_version": parts[1],
+                    "new_version": parts[3],
+                    "source": "pacman",
+                }
+            )
+    return pkgs
+
+
+@lru_cache(maxsize=512)
+def is_core_system_package(pkg_name: str) -> bool:
+    try:
+        out = subprocess.check_output(
+            ["pacman", "-Si", pkg_name],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+    repositories = []
+    for line in out.splitlines():
+        if line.startswith("Repository"):
+            _, _, repo = line.partition(":")
+            repo = repo.strip().lower()
+            if repo:
+                repositories.append(repo)
+
+    return any(repo == "core" or repo.endswith("-core") or "-core-" in repo for repo in repositories)
+
+
+def get_pacman_updates(exclude_core_system_updates: bool = False) -> tuple[list[dict], list[str]]:
+    try:
+        out = subprocess.check_output(
+            ["checkupdates"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return [], []
+
+    pkgs = _parse_checkupdates_output(out)
+    if not exclude_core_system_updates:
+        return pkgs, []
+
+    visible_updates = []
+    ignored_packages = []
+    for pkg in pkgs:
+        if is_core_system_package(pkg["name"]):
+            ignored_packages.append(pkg["name"])
+        else:
+            visible_updates.append(pkg)
+    return visible_updates, ignored_packages
 
 
 def _pre_auth_sudo(password: str) -> bool:
@@ -436,8 +499,7 @@ class UpdateChecker(QThread):
         tasks = []
         logger.info("UpdateChecker starting (exclude_system_updates=%s)", self.exclude_system_updates)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            if not self.exclude_system_updates:
-                tasks.append(executor.submit(self._check_pacman_updates))
+            tasks.append(executor.submit(self._check_pacman_updates))
             if shutil.which("flatpak"):
                 tasks.append(executor.submit(self._check_flatpak_updates))
 
@@ -452,29 +514,8 @@ class UpdateChecker(QThread):
         self.updates_ready.emit(results)
 
     def _check_pacman_updates(self) -> list:
-        try:
-            out = subprocess.check_output(
-                ["checkupdates"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            pkgs = []
-            for line in out.strip().splitlines():
-                parts = line.split()
-                if len(parts) >= 4:
-                    pkgs.append(
-                        {
-                            "name": parts[0],
-                            "old_version": parts[1],
-                            "new_version": parts[3],
-                            "source": "pacman",
-                        }
-                    )
-            return pkgs
-        except subprocess.CalledProcessError:
-            return []
-        except FileNotFoundError:
-            return []
+        updates, _ = get_pacman_updates(exclude_core_system_updates=self.exclude_system_updates)
+        return updates
 
     def _check_flatpak_updates(self) -> list:
         try:

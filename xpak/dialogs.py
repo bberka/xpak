@@ -334,7 +334,7 @@ class UpdatePreferencesDialog(QDialog):
         self.daily_check_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.daily_check_check)
 
-        self.exclude_system_updates_check = QCheckBox("Exclude system package updates")
+        self.exclude_system_updates_check = QCheckBox("Exclude core system package updates")
         self.exclude_system_updates_check.setChecked(exclude_system_updates)
         self.exclude_system_updates_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.exclude_system_updates_check)

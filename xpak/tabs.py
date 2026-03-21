@@ -13,7 +13,8 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from xpak import APP_ROOT, INSTALL_SCRIPT
 from xpak.workers import (
-    CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker
+    CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker,
+    get_pacman_updates,
 )
 from xpak.widgets import TerminalOutput, TerminalPanel, PackageTable, SourceSelector
 from xpak.dialogs import PasswordDialog
@@ -721,9 +722,7 @@ class UpdatesTab(QWidget):
                 has_non_system_updates if self._exclude_system_updates else has_updates
             )
         )
-        self.update_pacman_btn.setEnabled(
-            enabled and not worker_busy and not self._exclude_system_updates
-        )
+        self.update_pacman_btn.setEnabled(enabled and not worker_busy)
         self.update_flatpak_btn.setEnabled(
             enabled and not worker_busy and shutil.which("flatpak") is not None
         )
@@ -851,12 +850,7 @@ class UpdatesTab(QWidget):
     def update_all(self):
         self.reload_preferences()
         if self._exclude_system_updates:
-            has_flatpak_updates = any(update.get("source") == "flatpak" for update in self._updates)
-            if not has_flatpak_updates:
-                self.terminal.append_error("No non-system updates are available to install.")
-                return
-            self.terminal.append_info("System package updates are excluded; updating Flatpak packages only")
-            self._run_update(["flatpak", "update", "-y"], sudo=False)
+            self._run_pacman_update_excluding_core()
             return
 
         dlg = PasswordDialog(self)
@@ -869,7 +863,7 @@ class UpdatesTab(QWidget):
     def update_pacman(self):
         self.reload_preferences()
         if self._exclude_system_updates:
-            self.terminal.append_error("System package updates are excluded in Settings.")
+            self._run_pacman_update_excluding_core()
             return
         dlg = PasswordDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -897,6 +891,30 @@ class UpdatesTab(QWidget):
             password=password,
             pre_auth=True,
         )
+
+    def _run_pacman_update_excluding_core(self):
+        visible_updates, ignored_packages = get_pacman_updates(exclude_core_system_updates=True)
+        if not visible_updates:
+            self.terminal.append_error("No non-system pacman updates are available to install.")
+            return
+
+        dlg = PasswordDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        password = dlg.password()
+        if ignored_packages:
+            self.terminal.append_info(
+                f"Updating non-system pacman packages and skipping {len(ignored_packages)} core system update"
+                f"{'s' if len(ignored_packages) != 1 else ''}"
+            )
+        else:
+            self.terminal.append_info("Updating pacman packages")
+
+        cmd = ["pacman", "-Syu", "--noconfirm"]
+        if ignored_packages:
+            cmd.extend(["--ignore", ",".join(ignored_packages)])
+        self._run_update(cmd, sudo=True, password=password)
 
     def _run_update(self, cmd: list, sudo: bool = False, password: str = "", pre_auth: bool = False):
         if not self._begin_operation(f"Running {' '.join(cmd[:2])}"):
@@ -1398,7 +1416,7 @@ class SettingsTab(QWidget):
         self.check_daily.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.check_daily)
 
-        self.exclude_system_updates = QCheckBox("Exclude system package updates")
+        self.exclude_system_updates = QCheckBox("Exclude core system package updates (Experimental)")
         self.exclude_system_updates.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.exclude_system_updates)
 
