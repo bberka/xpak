@@ -687,6 +687,7 @@ class UpdatesTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._updates: list[dict] = []
+        self._filtered_updates: list[dict] = []
         self._worker: CommandWorker | None = None
         self._build_ui()
 
@@ -724,10 +725,17 @@ class UpdatesTab(QWidget):
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
 
+        filter_row = QHBoxLayout()
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText("Filter available updates...")
+        self.filter_input.textChanged.connect(self._apply_filter)
+        self.setFocusProxy(self.filter_input)
+        filter_row.addWidget(self.filter_input)
+        layout.addLayout(filter_row)
+
         toolbar = QHBoxLayout()
         self.check_btn = QPushButton("Check for Updates")
         self.check_btn.clicked.connect(self.check_updates)
-        self.setFocusProxy(self.check_btn)
 
         self.update_all_btn = QPushButton("Update All")
         self.update_all_btn.setObjectName("primary")
@@ -772,8 +780,17 @@ class UpdatesTab(QWidget):
         layout.addWidget(self.terminal)
 
     def focus_primary_input(self):
-        if self.check_btn.isEnabled():
-            self.check_btn.setFocus()
+        if self.filter_input.isEnabled():
+            self.filter_input.setFocus()
+            self.filter_input.selectAll()
+
+    def _apply_filter(self):
+        query = self.filter_input.text().strip().lower()
+        self._filtered_updates = [
+            update for update in self._updates
+            if not query or query in update.get("name", "").lower()
+        ]
+        self.table.populate(self._filtered_updates, self.COLUMNS)
 
     def check_updates(self, quiet: bool = False):
         window = self.window()
@@ -803,7 +820,7 @@ class UpdatesTab(QWidget):
 
     def apply_updates_result(self, updates: list, announce: bool = False):
         self._updates = updates
-        self.table.populate(updates, self.COLUMNS)
+        self._apply_filter()
         count = len(updates)
         if count:
             self.status_label.setText(f"{count} update{'s' if count != 1 else ''} available")
@@ -1464,7 +1481,7 @@ class ShortcutsTab(QWidget):
                 [
                     ("Search", "Ctrl+F focuses the package search input"),
                     ("Installed", "Ctrl+F focuses the installed-package filter"),
-                    ("Updates", "Ctrl+F focuses the Check for Updates button"),
+                    ("Updates", "Ctrl+F focuses the updates filter"),
                     ("Maintenance", "Ctrl+F focuses the Check for XPAK Update button"),
                     ("Settings", "Ctrl+F focuses the Save Settings button"),
                 ],

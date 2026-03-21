@@ -188,7 +188,7 @@ Lists all installed packages across pacman and Flatpak. Use the filter box to se
 
 ### Updates Tab
 
-Click **Check for Updates** to scan for available updates using `checkupdates` (pacman) and `flatpak remote-ls`. Then use:
+Click **Check for Updates** to scan for available updates using `checkupdates` (pacman) and `flatpak remote-ls`. Use the filter box to narrow the list by package name. Then use:
 
 - **Update All** — full pacman system upgrade (`pacman -Syu`)
 - **Update Flatpaks** — update all Flatpak apps
