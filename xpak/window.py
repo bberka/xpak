@@ -280,7 +280,8 @@ class MainWindow(QMainWindow):
         self._startup_package_checker.start()
 
     def _on_startup_xpak_update_available(self, version: str, url: str):
-        mark_xpak_checked_today()
+        if not self._start_hidden_to_tray:
+            mark_xpak_checked_today()
         self.tools_tab.display_app_update_result(version, url, announce=False)
         self._startup_xpak_result_handled = True
         answer = QMessageBox.information(
@@ -296,7 +297,8 @@ class MainWindow(QMainWindow):
         self._run_deferred_startup_package_check()
 
     def _on_startup_xpak_no_update(self):
-        mark_xpak_checked_today()
+        if not self._start_hidden_to_tray:
+            mark_xpak_checked_today()
         self.tools_tab.display_app_up_to_date(announce=False)
         self._startup_xpak_result_handled = True
         self._run_deferred_startup_package_check()
@@ -313,7 +315,8 @@ class MainWindow(QMainWindow):
             self._run_deferred_startup_package_check()
 
     def _on_startup_package_updates_ready(self, updates: list):
-        mark_packages_checked_today()
+        if not self._start_hidden_to_tray:
+            mark_packages_checked_today()
         self.updates_tab.apply_updates_result(updates, announce=False)
         if not updates:
             return
