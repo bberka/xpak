@@ -11,6 +11,7 @@ from xpak.dialogs import ToolCheckDialog, UpdatePreferencesDialog
 from xpak.workers import UpdateChecker, AppUpdateChecker
 from xpak.logging_service import get_logger
 from xpak.settings import (
+    load_repo_preferences,
     load_startup_preferences,
     load_update_preferences,
     mark_packages_checked_today,
@@ -282,7 +283,12 @@ class MainWindow(QMainWindow):
             return
 
         _, _, _, _, exclude_system_updates = load_update_preferences()
-        self._startup_package_checker = UpdateChecker(exclude_system_updates=exclude_system_updates)
+        include_pacman_repos, exclude_pacman_repos = load_repo_preferences()
+        self._startup_package_checker = UpdateChecker(
+            exclude_system_updates=exclude_system_updates,
+            include_pacman_repos=include_pacman_repos,
+            exclude_pacman_repos=exclude_pacman_repos,
+        )
         self._startup_package_checker.updates_ready.connect(self._on_startup_package_updates_ready)
         self._startup_package_checker.finished.connect(self._on_startup_package_check_finished)
         self._startup_package_checker.start()

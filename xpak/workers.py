@@ -34,29 +34,73 @@ def _parse_checkupdates_output(out: str) -> list[dict]:
     return pkgs
 
 
-@lru_cache(maxsize=512)
-def is_core_system_package(pkg_name: str) -> bool:
+def _normalize_repo_filters(repos: list[str] | None) -> list[str]:
+    if not repos:
+        return []
+
+    normalized = []
+    seen = set()
+    for repo in repos:
+        name = str(repo).strip().lower()
+        if name and name not in seen:
+            normalized.append(name)
+            seen.add(name)
+    return normalized
+
+
+def is_repo_allowed(repo_name: str, include_repos: list[str] | None = None, exclude_repos: list[str] | None = None) -> bool:
+    repo = (repo_name or "").strip().lower()
+    include = set(_normalize_repo_filters(include_repos))
+    exclude = set(_normalize_repo_filters(exclude_repos))
+    if include and repo not in include:
+        return False
+    return repo not in exclude
+
+
+@lru_cache(maxsize=1)
+def get_available_pacman_repos() -> list[str]:
     try:
         out = subprocess.check_output(
-            ["pacman", "-Si", pkg_name],
+            ["pacman-conf", "--repo-list"],
             text=True,
             stderr=subprocess.DEVNULL,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+        return []
 
-    repositories = []
+    return [line.strip().lower() for line in out.splitlines() if line.strip()]
+
+
+@lru_cache(maxsize=2048)
+def get_pacman_package_repo(pkg_name: str, local: bool = False) -> str:
+    cmd = ["pacman", "-Qi" if local else "-Si", pkg_name]
+    try:
+        out = subprocess.check_output(
+            cmd,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
     for line in out.splitlines():
         if line.startswith("Repository"):
             _, _, repo = line.partition(":")
-            repo = repo.strip().lower()
-            if repo:
-                repositories.append(repo)
-
-    return any(repo == "core" or repo.endswith("-core") or "-core-" in repo for repo in repositories)
+            return repo.strip().lower()
+    return ""
 
 
-def get_pacman_updates(exclude_core_system_updates: bool = False) -> tuple[list[dict], list[str]]:
+@lru_cache(maxsize=512)
+def is_core_system_package(pkg_name: str) -> bool:
+    repo = get_pacman_package_repo(pkg_name)
+    return bool(repo) and (repo == "core" or repo.endswith("-core") or "-core-" in repo)
+
+
+def get_pacman_updates(
+    exclude_core_system_updates: bool = False,
+    include_repos: list[str] | None = None,
+    exclude_repos: list[str] | None = None,
+) -> tuple[list[dict], list[str]]:
     try:
         out = subprocess.check_output(
             ["checkupdates"],
@@ -67,13 +111,17 @@ def get_pacman_updates(exclude_core_system_updates: bool = False) -> tuple[list[
         return [], []
 
     pkgs = _parse_checkupdates_output(out)
-    if not exclude_core_system_updates:
-        return pkgs, []
-
     visible_updates = []
     ignored_packages = []
     for pkg in pkgs:
-        if is_core_system_package(pkg["name"]):
+        repo = get_pacman_package_repo(pkg["name"])
+        pkg["repo"] = repo
+
+        if not is_repo_allowed(repo, include_repos, exclude_repos):
+            ignored_packages.append(pkg["name"])
+            continue
+
+        if exclude_core_system_updates and is_core_system_package(pkg["name"]):
             ignored_packages.append(pkg["name"])
         else:
             visible_updates.append(pkg)
@@ -248,10 +296,18 @@ class SearchWorker(QThread):
     search_done = pyqtSignal(int)
     error = pyqtSignal(str)
 
-    def __init__(self, query: str, sources: list):
+    def __init__(
+        self,
+        query: str,
+        sources: list,
+        include_pacman_repos: list[str] | None = None,
+        exclude_pacman_repos: list[str] | None = None,
+    ):
         super().__init__()
         self.query = query
         self.sources = sources  # list of "pacman", "aur", "flatpak"
+        self.include_pacman_repos = _normalize_repo_filters(include_pacman_repos)
+        self.exclude_pacman_repos = _normalize_repo_filters(exclude_pacman_repos)
 
     def run(self):
         total = 0
@@ -291,7 +347,15 @@ class SearchWorker(QThread):
                 text=True,
                 stderr=subprocess.DEVNULL,
             )
-            return self._parse_pacman_output(out, "pacman")
+            results = self._parse_pacman_output(out, "pacman")
+            return [
+                pkg for pkg in results
+                if is_repo_allowed(
+                    pkg.get("repo", ""),
+                    self.include_pacman_repos,
+                    self.exclude_pacman_repos,
+                )
+            ]
         except subprocess.CalledProcessError:
             return []
 
@@ -415,9 +479,16 @@ class SearchWorker(QThread):
 class InstalledLoader(QThread):
     results_ready = pyqtSignal(list)
 
-    def __init__(self, source: str = "all"):
+    def __init__(
+        self,
+        source: str = "all",
+        include_pacman_repos: list[str] | None = None,
+        exclude_pacman_repos: list[str] | None = None,
+    ):
         super().__init__()
         self.source = source
+        self.include_pacman_repos = _normalize_repo_filters(include_pacman_repos)
+        self.exclude_pacman_repos = _normalize_repo_filters(exclude_pacman_repos)
 
     def run(self):
         results = []
@@ -450,11 +521,19 @@ class InstalledLoader(QThread):
             for line in out.strip().splitlines():
                 parts = line.split()
                 if len(parts) >= 2:
+                    repo = get_pacman_package_repo(parts[0], local=True)
+                    if not is_repo_allowed(
+                        repo,
+                        self.include_pacman_repos,
+                        self.exclude_pacman_repos,
+                    ):
+                        continue
                     pkgs.append(
                         {
                             "name": parts[0],
                             "version": parts[1],
                             "source": "pacman",
+                            "repo": repo,
                             "description": "",
                         }
                     )
@@ -490,9 +569,16 @@ class InstalledLoader(QThread):
 class UpdateChecker(QThread):
     updates_ready = pyqtSignal(list)
 
-    def __init__(self, exclude_system_updates: bool = False):
+    def __init__(
+        self,
+        exclude_system_updates: bool = False,
+        include_pacman_repos: list[str] | None = None,
+        exclude_pacman_repos: list[str] | None = None,
+    ):
         super().__init__()
         self.exclude_system_updates = exclude_system_updates
+        self.include_pacman_repos = _normalize_repo_filters(include_pacman_repos)
+        self.exclude_pacman_repos = _normalize_repo_filters(exclude_pacman_repos)
 
     def run(self):
         results = []
@@ -514,7 +600,11 @@ class UpdateChecker(QThread):
         self.updates_ready.emit(results)
 
     def _check_pacman_updates(self) -> list:
-        updates, _ = get_pacman_updates(exclude_core_system_updates=self.exclude_system_updates)
+        updates, _ = get_pacman_updates(
+            exclude_core_system_updates=self.exclude_system_updates,
+            include_repos=self.include_pacman_repos,
+            exclude_repos=self.exclude_pacman_repos,
+        )
         return updates
 
     def _check_flatpak_updates(self) -> list:

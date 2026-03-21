@@ -15,15 +15,18 @@ from xpak import APP_ROOT, INSTALL_SCRIPT
 from xpak.workers import (
     CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker,
     get_pacman_updates,
+    get_available_pacman_repos,
 )
 from xpak.widgets import TerminalOutput, TerminalPanel, PackageTable, SourceSelector
 from xpak.dialogs import PasswordDialog
 from xpak.logging_service import get_logger, get_log_dir
 from xpak.settings import (
     build_launch_command,
+    load_repo_preferences,
     load_startup_preferences,
     load_update_preferences,
     RESTART_INSTANCE_ARG,
+    save_repo_preferences,
     save_startup_preferences,
     save_update_preferences,
     sync_autostart_file,
@@ -103,6 +106,8 @@ class SearchTab(QWidget):
         self._results: list[dict] = []
         self._sorted_results: list[dict] = []
         self._query: str = ""
+        self._include_pacman_repos: list[str] = []
+        self._exclude_pacman_repos: list[str] = []
         self._build_ui()
 
     def _begin_operation(self, description: str) -> bool:
@@ -273,7 +278,13 @@ class SearchTab(QWidget):
         self.search_btn.setEnabled(False)
         self.status_label.setText("Searching...")
 
-        self._search_worker = SearchWorker(query, sources)
+        self._include_pacman_repos, self._exclude_pacman_repos = load_repo_preferences()
+        self._search_worker = SearchWorker(
+            query,
+            sources,
+            include_pacman_repos=self._include_pacman_repos,
+            exclude_pacman_repos=self._exclude_pacman_repos,
+        )
         self._search_worker.result_chunk.connect(self._on_result_chunk)
         self._search_worker.search_done.connect(self._on_search_done)
         self._search_worker.error.connect(self._on_search_error)
@@ -496,7 +507,7 @@ class SearchTab(QWidget):
 
 
 class InstalledTab(QWidget):
-    COLUMNS = ["Name", "Version", "Source"]
+    COLUMNS = ["Name", "Version", "Source", "Repo"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -591,7 +602,12 @@ class InstalledTab(QWidget):
 
         self.progress.setVisible(True)
         self.refresh_btn.setEnabled(False)
-        self._loader = InstalledLoader("all")
+        include_pacman_repos, exclude_pacman_repos = load_repo_preferences()
+        self._loader = InstalledLoader(
+            "all",
+            include_pacman_repos=include_pacman_repos,
+            exclude_pacman_repos=exclude_pacman_repos,
+        )
         self._loader.results_ready.connect(self._on_loaded)
         self._loader.finished.connect(lambda: (
             self.progress.setVisible(False),
@@ -683,7 +699,7 @@ class InstalledTab(QWidget):
 
 
 class UpdatesTab(QWidget):
-    COLUMNS = ["Name", "Old Version", "New Version", "Source"]
+    COLUMNS = ["Name", "Old Version", "New Version", "Source", "Repo"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -691,6 +707,8 @@ class UpdatesTab(QWidget):
         self._filtered_updates: list[dict] = []
         self._worker: CommandWorker | None = None
         self._exclude_system_updates = False
+        self._include_pacman_repos: list[str] = []
+        self._exclude_pacman_repos: list[str] = []
         self._build_ui()
         self.reload_preferences()
 
@@ -712,16 +730,9 @@ class UpdatesTab(QWidget):
         checker_busy = hasattr(self, "_checker") and self._checker is not None and self._checker.isRunning()
         worker_busy = self._worker is not None and self._worker.isRunning()
         has_updates = bool(self._updates)
-        has_non_system_updates = any(
-            update.get("source") != "pacman" for update in self._updates
-        )
 
         self.check_btn.setEnabled(enabled and not checker_busy)
-        self.update_all_btn.setEnabled(
-            enabled and not worker_busy and (
-                has_non_system_updates if self._exclude_system_updates else has_updates
-            )
-        )
+        self.update_all_btn.setEnabled(enabled and not worker_busy and has_updates)
         self.update_pacman_btn.setEnabled(enabled and not worker_busy)
         self.update_flatpak_btn.setEnabled(
             enabled and not worker_busy and shutil.which("flatpak") is not None
@@ -796,6 +807,7 @@ class UpdatesTab(QWidget):
 
     def reload_preferences(self):
         _, _, _, _, self._exclude_system_updates = load_update_preferences()
+        self._include_pacman_repos, self._exclude_pacman_repos = load_repo_preferences()
         self.set_operation_controls_enabled(True)
 
     def _apply_filter(self):
@@ -821,7 +833,11 @@ class UpdatesTab(QWidget):
         self.terminal.append_info("Checking for updates")
 
         self.reload_preferences()
-        self._checker = UpdateChecker(exclude_system_updates=self._exclude_system_updates)
+        self._checker = UpdateChecker(
+            exclude_system_updates=self._exclude_system_updates,
+            include_pacman_repos=self._include_pacman_repos,
+            exclude_pacman_repos=self._exclude_pacman_repos,
+        )
         self._checker.updates_ready.connect(self._on_updates)
         self._checker.finished.connect(lambda: (
             self.progress.setVisible(False),
@@ -849,8 +865,8 @@ class UpdatesTab(QWidget):
 
     def update_all(self):
         self.reload_preferences()
-        if self._exclude_system_updates:
-            self._run_pacman_update_excluding_core()
+        if self._exclude_system_updates or self._include_pacman_repos or self._exclude_pacman_repos:
+            self._run_filtered_pacman_update()
             return
 
         dlg = PasswordDialog(self)
@@ -862,8 +878,8 @@ class UpdatesTab(QWidget):
 
     def update_pacman(self):
         self.reload_preferences()
-        if self._exclude_system_updates:
-            self._run_pacman_update_excluding_core()
+        if self._exclude_system_updates or self._include_pacman_repos or self._exclude_pacman_repos:
+            self._run_filtered_pacman_update()
             return
         dlg = PasswordDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -892,10 +908,14 @@ class UpdatesTab(QWidget):
             pre_auth=True,
         )
 
-    def _run_pacman_update_excluding_core(self):
-        visible_updates, ignored_packages = get_pacman_updates(exclude_core_system_updates=True)
+    def _run_filtered_pacman_update(self):
+        visible_updates, ignored_packages = get_pacman_updates(
+            exclude_core_system_updates=self._exclude_system_updates,
+            include_repos=self._include_pacman_repos,
+            exclude_repos=self._exclude_pacman_repos,
+        )
         if not visible_updates:
-            self.terminal.append_error("No non-system pacman updates are available to install.")
+            self.terminal.append_error("No matching pacman updates are available to install.")
             return
 
         dlg = PasswordDialog(self)
@@ -905,7 +925,7 @@ class UpdatesTab(QWidget):
         password = dlg.password()
         if ignored_packages:
             self.terminal.append_info(
-                f"Updating non-system pacman packages and skipping {len(ignored_packages)} core system update"
+                f"Updating filtered pacman packages and skipping {len(ignored_packages)} package"
                 f"{'s' if len(ignored_packages) != 1 else ''}"
             )
         else:
@@ -1420,6 +1440,39 @@ class SettingsTab(QWidget):
         self.exclude_system_updates.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.exclude_system_updates)
 
+        repo_title = QLabel("Pacman Repository Filters")
+        repo_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
+        layout.addWidget(repo_title)
+
+        repo_description = QLabel(
+            "Limit pacman search results, installed package lists, and update checks to specific repositories. "
+            "Use comma-separated repository names like core, extra, or multilib."
+        )
+        repo_description.setWordWrap(True)
+        repo_description.setStyleSheet("color: #565f89; font-size: 12px;")
+        layout.addWidget(repo_description)
+
+        self.available_repos_label = QLabel("")
+        self.available_repos_label.setWordWrap(True)
+        self.available_repos_label.setStyleSheet("color: #565f89; font-size: 11px;")
+        layout.addWidget(self.available_repos_label)
+
+        include_label = QLabel("Only include these pacman repos")
+        include_label.setStyleSheet("color: #a9b1d6; font-size: 12px;")
+        layout.addWidget(include_label)
+
+        self.include_repos_input = QLineEdit()
+        self.include_repos_input.setPlaceholderText("Leave empty to allow all repos")
+        layout.addWidget(self.include_repos_input)
+
+        exclude_label = QLabel("Exclude these pacman repos")
+        exclude_label.setStyleSheet("color: #a9b1d6; font-size: 12px;")
+        layout.addWidget(exclude_label)
+
+        self.exclude_repos_input = QLineEdit()
+        self.exclude_repos_input.setPlaceholderText("Comma-separated repo names to skip")
+        layout.addWidget(self.exclude_repos_input)
+
         startup_title = QLabel("Desktop Startup")
         startup_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
         layout.addWidget(startup_title)
@@ -1457,6 +1510,8 @@ class SettingsTab(QWidget):
         self.auto_check_packages.setEnabled(enabled)
         self.check_daily.setEnabled(enabled)
         self.exclude_system_updates.setEnabled(enabled)
+        self.include_repos_input.setEnabled(enabled)
+        self.exclude_repos_input.setEnabled(enabled)
         self.launch_on_startup.setEnabled(enabled)
         self.start_to_tray.setEnabled(enabled and self.launch_on_startup.isChecked())
 
@@ -1467,14 +1522,22 @@ class SettingsTab(QWidget):
 
     def reload_preferences(self):
         _, auto_check_xpak, auto_check_packages, check_daily, exclude_system_updates = load_update_preferences()
+        include_repos, exclude_repos = load_repo_preferences()
         launch_on_startup, start_to_tray = load_startup_preferences()
         self.auto_check_xpak.setChecked(auto_check_xpak)
         self.auto_check_packages.setChecked(auto_check_packages)
         self.check_daily.setChecked(check_daily)
         self.exclude_system_updates.setChecked(exclude_system_updates)
+        self.include_repos_input.setText(", ".join(include_repos))
+        self.exclude_repos_input.setText(", ".join(exclude_repos))
         self.launch_on_startup.setChecked(launch_on_startup)
         self.start_to_tray.setChecked(launch_on_startup and start_to_tray)
         self._sync_startup_controls(launch_on_startup)
+        available_repos = get_available_pacman_repos()
+        if available_repos:
+            self.available_repos_label.setText(f"Detected repos: {', '.join(available_repos)}")
+        else:
+            self.available_repos_label.setText("Detected repos: unavailable")
         self.status_label.setText("")
         self.status_label.setStyleSheet("color: #565f89; font-size: 12px;")
 
@@ -1487,6 +1550,10 @@ class SettingsTab(QWidget):
             self.check_daily.isChecked(),
             self.exclude_system_updates.isChecked(),
         )
+        save_repo_preferences(
+            self._parse_repo_input(self.include_repos_input.text()),
+            self._parse_repo_input(self.exclude_repos_input.text()),
+        )
         save_startup_preferences(launch_on_startup, start_to_tray)
         sync_autostart_file(launch_on_startup, start_to_tray)
         window = self.window()
@@ -1494,8 +1561,21 @@ class SettingsTab(QWidget):
             window.refresh_tray_preferences()
         if hasattr(window, "updates_tab"):
             window.updates_tab.reload_preferences()
+        if hasattr(window, "installed_tab"):
+            window.installed_tab.load_packages(quiet=True)
         self.status_label.setText("Settings saved")
         self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
+
+    @staticmethod
+    def _parse_repo_input(text: str) -> list[str]:
+        repos = []
+        seen = set()
+        for item in text.split(","):
+            repo = item.strip().lower()
+            if repo and repo not in seen:
+                repos.append(repo)
+                seen.add(repo)
+        return repos
 
 
 class ShortcutsTab(QWidget):

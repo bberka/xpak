@@ -16,6 +16,8 @@ AUTO_CHECK_XPAK_UPDATES_KEY = "updates/auto_check_xpak"
 AUTO_CHECK_PACKAGE_UPDATES_KEY = "updates/auto_check_packages"
 CHECK_UPDATES_DAILY_KEY = "updates/check_daily"
 EXCLUDE_SYSTEM_UPDATES_KEY = "updates/exclude_system_updates"
+INCLUDED_PACMAN_REPOS_KEY = "pacman/include_repos"
+EXCLUDED_PACMAN_REPOS_KEY = "pacman/exclude_repos"
 LAST_XPAK_UPDATE_CHECK_DATE_KEY = "updates/last_xpak_check_date"
 LAST_PACKAGE_UPDATE_CHECK_DATE_KEY = "updates/last_package_check_date"
 LAUNCH_ON_SYSTEM_STARTUP_KEY = "startup/launch_on_system_startup"
@@ -53,6 +55,20 @@ def save_update_preferences(
     settings.setValue(AUTO_CHECK_PACKAGE_UPDATES_KEY, auto_check_packages)
     settings.setValue(CHECK_UPDATES_DAILY_KEY, check_daily)
     settings.setValue(EXCLUDE_SYSTEM_UPDATES_KEY, exclude_system_updates)
+    settings.sync()
+
+
+def load_repo_preferences() -> tuple[list[str], list[str]]:
+    settings = get_settings()
+    included = _normalize_repo_list(settings.value(INCLUDED_PACMAN_REPOS_KEY, []))
+    excluded = _normalize_repo_list(settings.value(EXCLUDED_PACMAN_REPOS_KEY, []))
+    return included, excluded
+
+
+def save_repo_preferences(included_repos: list[str], excluded_repos: list[str]):
+    settings = get_settings()
+    settings.setValue(INCLUDED_PACMAN_REPOS_KEY, _normalize_repo_list(included_repos))
+    settings.setValue(EXCLUDED_PACMAN_REPOS_KEY, _normalize_repo_list(excluded_repos))
     settings.sync()
 
 
@@ -169,3 +185,21 @@ def _mark_checked_today(settings_key: str):
     settings = get_settings()
     settings.setValue(settings_key, date.today().isoformat())
     settings.sync()
+
+
+def _normalize_repo_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = value.split(",")
+    else:
+        items = list(value)
+
+    normalized = []
+    seen = set()
+    for item in items:
+        repo = str(item).strip().lower()
+        if repo and repo not in seen:
+            normalized.append(repo)
+            seen.add(repo)
+    return normalized
