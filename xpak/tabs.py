@@ -16,6 +16,7 @@ from xpak import APP_ROOT, INSTALL_SCRIPT
 from xpak.workers import (
     CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker,
     format_size_bytes,
+    format_size_delta,
     get_pacman_updates,
     get_available_pacman_repos,
 )
@@ -873,7 +874,7 @@ class InstalledTab(QWidget):
 
 
 class UpdatesTab(QWidget):
-    COLUMNS = ["Name", "Old Version", "New Version", "Source", "Repo", "Download Size"]
+    COLUMNS = ["Name", "Old Version", "New Version", "Source", "Repo", "Download Size", "Size Change"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1045,57 +1046,57 @@ class UpdatesTab(QWidget):
     def _on_updates(self, updates: list):
         self.apply_updates_result(updates, announce=True)
 
+    @staticmethod
+    def _collect_size_totals(updates: list[dict], key: str) -> tuple[list[int], int]:
+        known_sizes = [update.get(key) for update in updates if update.get(key) is not None]
+        return known_sizes, len(updates) - len(known_sizes)
+
+    @staticmethod
+    def _format_size_summary(updates: list[dict]) -> str:
+        parts = []
+
+        known_downloads, unknown_downloads = UpdatesTab._collect_size_totals(updates, "download_size_bytes")
+        if known_downloads:
+            parts.append(
+                f"{format_size_bytes(sum(known_downloads))} {'known download' if unknown_downloads else 'total download'}"
+            )
+        elif unknown_downloads:
+            parts.append("N/A download size")
+
+        known_changes, unknown_changes = UpdatesTab._collect_size_totals(updates, "size_change_bytes")
+        if known_changes:
+            parts.append(
+                f"{format_size_delta(sum(known_changes))} {'known size change' if unknown_changes else 'total size change'}"
+            )
+
+        return " • ".join(parts)
+
     def apply_updates_result(self, updates: list, announce: bool = False):
         self._updates = updates
         self._apply_filter()
         self.set_operation_controls_enabled(True)
         if announce:
             count = len(updates)
-            known_downloads = [update.get("download_size_bytes") for update in updates if update.get("download_size_bytes") is not None]
-            unknown_count = len(updates) - len(known_downloads)
-            total_download = sum(known_downloads)
-            if known_downloads:
-                suffix = " known download" if unknown_count else " total download"
-                self.terminal.append_success(
-                    f"Check complete: {count} updates found • {format_size_bytes(total_download)} {suffix}"
-                )
-            elif unknown_count:
-                self.terminal.append_success(f"Check complete: {count} updates found • N/A download size")
+            summary = self._format_size_summary(updates)
+            if summary:
+                self.terminal.append_success(f"Check complete: {count} updates found • {summary}")
             else:
                 self.terminal.append_success(f"Check complete: {count} updates found")
 
     def _update_status_summary(self):
         count = len(self._filtered_updates)
-        known_downloads = [
-            update.get("download_size_bytes")
-            for update in self._filtered_updates
-            if update.get("download_size_bytes") is not None
-        ]
-        unknown_count = count - len(known_downloads)
-        total_download = sum(known_downloads)
         if count:
             label = f"{count} update{'s' if count != 1 else ''} available"
-            if known_downloads:
-                label += f" • {format_size_bytes(total_download)}"
-                label += " known download" if unknown_count else " total download"
-            elif unknown_count:
-                label += " • N/A download size"
+            summary = self._format_size_summary(self._filtered_updates)
+            if summary:
+                label += f" • {summary}"
             self.status_label.setText(label)
             self.status_label.setStyleSheet("color: #e0af68; font-weight: 700;")
         elif self._updates:
-            known_downloads = [
-                update.get("download_size_bytes")
-                for update in self._updates
-                if update.get("download_size_bytes") is not None
-            ]
-            unknown_count = len(self._updates) - len(known_downloads)
-            total_download = sum(known_downloads)
             label = f"No matching updates • {len(self._updates)} total pending"
-            if known_downloads:
-                label += f" • {format_size_bytes(total_download)}"
-                label += " known download" if unknown_count else " total download"
-            elif unknown_count:
-                label += " • N/A download size"
+            summary = self._format_size_summary(self._updates)
+            if summary:
+                label += f" • {summary}"
             self.status_label.setText(label)
             self.status_label.setStyleSheet("color: #565f89; font-weight: 700;")
         else:

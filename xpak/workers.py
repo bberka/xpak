@@ -5,6 +5,7 @@ import json
 import tempfile
 import shlex
 import concurrent.futures
+import re
 from functools import lru_cache
 from urllib.request import urlopen, Request
 from urllib.error import URLError
@@ -37,20 +38,37 @@ def parse_size_to_bytes(value: str) -> int | None:
     if not text:
         return None
 
-    compact = text.replace(",", "")
+    compact = " ".join(text.split())
     amount_text = compact
     unit = "B"
 
-    parts = compact.split()
-    if len(parts) >= 2:
-        amount_text = parts[0]
-        unit = parts[1].upper()
+    match = re.match(r"^\s*([+-]?[0-9][0-9.,]*)\s*([A-Za-z]+)?\s*$", compact)
+    if match:
+        amount_text = match.group(1)
+        unit = (match.group(2) or "B").upper()
     else:
-        idx = 0
-        while idx < len(compact) and (compact[idx].isdigit() or compact[idx] in ".+-"):
-            idx += 1
-        amount_text = compact[:idx] or compact
-        unit = (compact[idx:] or "B").upper()
+        parts = compact.split()
+        if len(parts) >= 2:
+            amount_text = parts[0]
+            unit = parts[1].upper()
+        else:
+            idx = 0
+            while idx < len(compact) and (compact[idx].isdigit() or compact[idx] in ".+-"):
+                idx += 1
+            amount_text = compact[:idx] or compact
+            unit = (compact[idx:] or "B").upper()
+
+    if "," in amount_text and "." in amount_text:
+        if amount_text.rfind(",") > amount_text.rfind("."):
+            amount_text = amount_text.replace(".", "").replace(",", ".")
+        else:
+            amount_text = amount_text.replace(",", "")
+    elif "," in amount_text:
+        whole, _, frac = amount_text.rpartition(",")
+        if whole and frac and len(frac) in (1, 2):
+            amount_text = f"{whole.replace(',', '')}.{frac}"
+        else:
+            amount_text = amount_text.replace(",", "")
 
     try:
         amount = float(amount_text)
@@ -76,6 +94,15 @@ def format_size_bytes(num_bytes: int | None) -> str:
         if value < 1000.0 or unit == units[-1]:
             break
     return f"{value:.2f} {unit}"
+
+
+def format_size_delta(num_bytes: int | None) -> str:
+    if num_bytes is None:
+        return "N/A"
+    if num_bytes == 0:
+        return "0 B"
+    sign = "+" if num_bytes > 0 else "-"
+    return f"{sign}{format_size_bytes(abs(num_bytes))}"
 
 
 def format_size_value(value: str) -> str:
@@ -209,6 +236,27 @@ def get_pacman_package_size_info(pkg_name: str, repo: str = "", local: bool = Fa
     }
 
 
+def get_pacman_update_size_info(pkg_name: str, repo: str = "") -> dict[str, str | int | None]:
+    remote_info = get_pacman_package_size_info(pkg_name, repo=repo, local=False)
+    local_info = get_pacman_package_size_info(pkg_name, local=True)
+
+    old_installed_size_bytes = local_info.get("installed_size_bytes")
+    new_installed_size_bytes = remote_info.get("installed_size_bytes")
+    size_change_bytes = None
+    if old_installed_size_bytes is not None and new_installed_size_bytes is not None:
+        size_change_bytes = int(new_installed_size_bytes) - int(old_installed_size_bytes)
+
+    return {
+        **remote_info,
+        "size_change": format_size_delta(size_change_bytes),
+        "size_change_bytes": size_change_bytes,
+        "old_installed_size": format_size_bytes(old_installed_size_bytes),
+        "old_installed_size_bytes": old_installed_size_bytes,
+        "new_installed_size": remote_info.get("installed_size", "N/A"),
+        "new_installed_size_bytes": new_installed_size_bytes,
+    }
+
+
 @lru_cache(maxsize=512)
 def is_core_system_package(pkg_name: str) -> bool:
     repo = get_pacman_package_repo(pkg_name)
@@ -235,7 +283,7 @@ def get_pacman_updates(
     for pkg in pkgs:
         repo = get_pacman_package_repo(pkg["name"])
         pkg["repo"] = repo
-        pkg.update(get_pacman_package_size_info(pkg["name"], repo=repo, local=False))
+        pkg.update(get_pacman_update_size_info(pkg["name"], repo=repo))
 
         if not is_repo_allowed(repo, include_repos, exclude_repos):
             ignored_packages.append(pkg["name"])
@@ -789,6 +837,8 @@ class UpdateChecker(QThread):
                             "repo": "flatpak",
                             "download_size": format_size_value(parts[3].strip() if len(parts) > 3 else ""),
                             "download_size_bytes": parse_size_to_bytes(parts[3].strip() if len(parts) > 3 else ""),
+                            "size_change": "N/A",
+                            "size_change_bytes": None,
                         }
                     )
             return pkgs
