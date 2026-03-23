@@ -1755,14 +1755,15 @@ class SettingsTab(QWidget):
         self.select_all_repos_btn = QPushButton("Select All")
         self.select_all_repos_btn.clicked.connect(self._select_all_repos)
         repo_actions.addWidget(self.select_all_repos_btn)
-        layout.addLayout(repo_actions)
 
-        repo_manage_row = QHBoxLayout()
         self.add_repo_btn = QPushButton("Add Repo")
         self.add_repo_btn.clicked.connect(self._add_repo)
-        repo_manage_row.addWidget(self.add_repo_btn)
-        repo_manage_row.addStretch()
-        layout.addLayout(repo_manage_row)
+        repo_actions.addWidget(self.add_repo_btn)
+
+        self.remove_repo_btn = QPushButton("Remove Selected Repo")
+        self.remove_repo_btn.clicked.connect(self._remove_selected_repo)
+        repo_actions.addWidget(self.remove_repo_btn)
+        layout.addLayout(repo_actions)
 
         self.repo_table = QTableWidget(0, 3)
         self.repo_table.setHorizontalHeaderLabels(["Use", "Repository", "pacman.conf"])
@@ -1790,13 +1791,6 @@ class SettingsTab(QWidget):
             }
         """)
         layout.addWidget(self.repo_table)
-
-        remove_repo_row = QHBoxLayout()
-        remove_repo_row.addStretch()
-        self.remove_repo_btn = QPushButton("Remove Selected Repo")
-        self.remove_repo_btn.clicked.connect(self._remove_selected_repo)
-        remove_repo_row.addWidget(self.remove_repo_btn)
-        layout.addLayout(remove_repo_row)
 
         action_row = QHBoxLayout()
         self.save_btn = QPushButton("Save Settings")
