@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-APP_VERSION = "1.12.1"
+APP_VERSION = "1.12.2"
 APP_NAME = "XPAK"
 APP_ID = "xpak"
 APP_DESKTOP_FILE = f"{APP_ID}.desktop"

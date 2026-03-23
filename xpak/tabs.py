@@ -1756,6 +1756,10 @@ class SettingsTab(QWidget):
         self.select_all_repos_btn.clicked.connect(self._select_all_repos)
         repo_actions.addWidget(self.select_all_repos_btn)
 
+        self.reload_repos_btn = QPushButton("Reload Repos")
+        self.reload_repos_btn.clicked.connect(self._reload_repo_list)
+        repo_actions.addWidget(self.reload_repos_btn)
+
         self.add_repo_btn = QPushButton("Add Repo")
         self.add_repo_btn.clicked.connect(self._add_repo)
         repo_actions.addWidget(self.add_repo_btn)
@@ -1833,6 +1837,7 @@ class SettingsTab(QWidget):
         self.launch_on_startup.setEnabled(enabled)
         self.start_to_tray.setEnabled(enabled and self.launch_on_startup.isChecked())
         self.select_all_repos_btn.setEnabled(enabled)
+        self.reload_repos_btn.setEnabled(enabled)
         self.add_repo_btn.setEnabled(enabled)
         self.remove_repo_btn.setEnabled(enabled)
         self.repo_table.setEnabled(enabled)
@@ -1994,6 +1999,12 @@ class SettingsTab(QWidget):
             item = self.repo_table.item(row, 0)
             if item is not None:
                 item.setCheckState(Qt.CheckState.Checked)
+
+    def _reload_repo_list(self):
+        refresh_pacman_repo_cache()
+        self.reload_preferences()
+        self.status_label.setText("Repository list reloaded from /etc/pacman.conf")
+        self.status_label.setStyleSheet("color: #9ece6a; font-weight: 700; font-size: 12px;")
 
     def _remove_selected_repo(self):
         row = self.repo_table.currentRow()
