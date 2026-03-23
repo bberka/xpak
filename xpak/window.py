@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
             sync_autostart_file(selected_launch, selected_tray)
 
     def _start_startup_update_checks(self):
-        _, auto_check_xpak, auto_check_packages, check_daily, _ = load_update_preferences()
+        _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
         should_check_xpak = auto_check_xpak and self._should_run_xpak_check(check_daily)
         should_check_packages = auto_check_packages and self._should_run_package_check(check_daily)
 

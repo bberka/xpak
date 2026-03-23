@@ -15,10 +15,12 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from xpak import APP_ROOT, INSTALL_SCRIPT
 from xpak.workers import (
     CommandWorker, SearchWorker, InstalledLoader, UpdateChecker, AppUpdateChecker,
+    build_search_terms,
     format_size_bytes,
     format_size_delta,
     get_pacman_updates,
     get_available_pacman_repos,
+    normalize_search_query,
 )
 from xpak.widgets import TerminalOutput, TerminalPanel, PackageTable, SourceSelector
 from xpak.dialogs import PasswordDialog
@@ -260,7 +262,10 @@ class SearchTab(QWidget):
         pass
 
     def do_search(self):
-        query = self.search_input.text().strip()
+        raw_query = self.search_input.text().strip()
+        if not raw_query:
+            return
+        query = normalize_search_query(raw_query)
         if not query:
             return
         if len(query) < self.MIN_SEARCH_LENGTH:
@@ -325,24 +330,30 @@ class SearchTab(QWidget):
         sort_key = self.sort_combo.currentText()
         descending = self.order_combo.currentText() == "Descending"
         search_desc = self.search_desc_check.isChecked()
-        query = self._query.lower()
+        query_terms = build_search_terms(self._query)
+        primary_query = query_terms[0] if query_terms else self._query.lower()
 
         # Filter: exclude description-only matches when search descriptions is off
-        if query and not search_desc:
-            results = [p for p in self._results if query in p.get("name", "").lower()]
+        if primary_query and not search_desc:
+            results = [
+                p for p in self._results
+                if any(term in p.get("name", "").lower() for term in query_terms)
+            ]
         else:
             results = list(self._results)
 
         if sort_key == "Relevance":
             def _relevance(pkg):
                 name = pkg.get("name", "").lower()
-                if name == query:
+                if name == primary_query:
                     return 0
-                if name.startswith(query):
+                if name in query_terms:
                     return 1
-                if query in name:
+                if any(name.startswith(term) for term in query_terms):
                     return 2
-                return 3  # description-only match
+                if any(term in name for term in query_terms):
+                    return 3
+                return 4  # description-only match
 
             self._sorted_results = sorted(results, key=_relevance, reverse=descending)
         elif sort_key == "Votes":

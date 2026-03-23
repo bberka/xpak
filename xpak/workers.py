@@ -6,6 +6,7 @@ import tempfile
 import shlex
 import concurrent.futures
 import re
+import itertools
 from functools import lru_cache
 from urllib.request import urlopen, Request
 from urllib.error import URLError
@@ -163,6 +164,39 @@ def _normalize_repo_filters(repos: list[str] | None) -> list[str]:
             normalized.append(name)
             seen.add(name)
     return normalized
+
+
+def normalize_search_query(query: str) -> str:
+    compact = " ".join(str(query or "").strip().split())
+    return compact.replace(" ", "-")
+
+
+def build_search_terms(query: str) -> list[str]:
+    normalized = normalize_search_query(query).lower()
+    if not normalized:
+        return []
+
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def add(term: str) -> None:
+        value = term.strip().lower()
+        if value and value not in seen:
+            seen.add(value)
+            terms.append(value)
+
+    add(normalized)
+    tokens = [token for token in re.split(r"[-\s]+", normalized) if token]
+
+    if len(tokens) > 1:
+        if len(tokens) <= 4:
+            for token_order in itertools.permutations(tokens):
+                add("-".join(token_order))
+        else:
+            add("-".join(tokens))
+            add("-".join(reversed(tokens)))
+
+    return terms
 
 
 def is_repo_allowed(repo_name: str, include_repos: list[str] | None = None, exclude_repos: list[str] | None = None) -> bool:
@@ -462,7 +496,8 @@ class SearchWorker(QThread):
         exclude_pacman_repos: list[str] | None = None,
     ):
         super().__init__()
-        self.query = query
+        self.query = normalize_search_query(query)
+        self.queries = build_search_terms(query) or [self.query.lower()]
         self.sources = sources  # list of "pacman", "aur", "flatpak"
         self.include_pacman_repos = _normalize_repo_filters(include_pacman_repos)
         self.exclude_pacman_repos = _normalize_repo_filters(exclude_pacman_repos)
@@ -499,90 +534,110 @@ class SearchWorker(QThread):
             self.search_done.emit(0)
 
     def _search_pacman(self) -> list:
-        try:
-            out = subprocess.check_output(
-                ["pacman", "-Ss", self.query],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            results = self._parse_pacman_output(out, "pacman")
-            return [
-                pkg for pkg in results
-                if is_repo_allowed(
-                    pkg.get("repo", ""),
-                    self.include_pacman_repos,
-                    self.exclude_pacman_repos,
-                )
-            ]
-        except subprocess.CalledProcessError:
-            return []
-
-    def _search_aur(self) -> list:
-        try:
-            from urllib.request import urlopen, Request as _Request
-            import json as _json
-            url = f"https://aur.archlinux.org/rpc/v5/search/{self.query}"
-            req = _Request(url, headers={"User-Agent": "xpak"})
-            with urlopen(req, timeout=15) as resp:
-                data = _json.loads(resp.read().decode())
-            installed = self._get_installed_names()
-            results = []
-            for pkg in data.get("results", []):
-                name = pkg.get("Name", "")
-                results.append(
-                    {
-                        "name": name,
-                        "version": pkg.get("Version", ""),
-                        "description": pkg.get("Description", "") or "",
-                        "source": "aur",
-                        "repo": "aur",
-                        "installed": name in installed,
-                        "votes": str(pkg.get("NumVotes", 0)),
-                        "download_size": "N/A",
-                        "download_size_bytes": None,
-                    }
-                )
-            return results
-        except Exception:
-            # Fallback to yay CLI (votes will be unavailable)
+        deduped: dict[tuple[str, str, str], dict] = {}
+        for query in self.queries:
             try:
                 out = subprocess.check_output(
-                    ["yay", "-Ssa", "--aur", self.query],
+                    ["pacman", "-Ss", query],
                     text=True,
                     stderr=subprocess.DEVNULL,
                 )
-                return self._parse_pacman_output(out, "aur")
             except subprocess.CalledProcessError:
-                return []
+                continue
 
-    def _search_flatpak(self) -> list:
+            results = self._parse_pacman_output(out, "pacman")
+            for pkg in results:
+                if not is_repo_allowed(
+                    pkg.get("repo", ""),
+                    self.include_pacman_repos,
+                    self.exclude_pacman_repos,
+                ):
+                    continue
+                key = (pkg.get("source", ""), pkg.get("repo", ""), pkg.get("name", ""))
+                deduped.setdefault(key, pkg)
+        return list(deduped.values())
+
+    def _search_aur(self) -> list:
+        deduped: dict[tuple[str, str, str], dict] = {}
+        installed = self._get_installed_names()
         try:
-            out = subprocess.check_output(
-                ["flatpak", "search", "--columns=application,name,version,description", self.query],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            results = []
-            for line in out.strip().splitlines()[1:]:  # skip header
-                parts = line.split("\t")
-                if len(parts) >= 2:
-                    results.append(
+            from urllib.request import urlopen, Request as _Request
+            import json as _json
+            for query in self.queries:
+                url = f"https://aur.archlinux.org/rpc/v5/search/{query}"
+                req = _Request(url, headers={"User-Agent": "xpak"})
+                with urlopen(req, timeout=15) as resp:
+                    data = _json.loads(resp.read().decode())
+
+                for pkg in data.get("results", []):
+                    name = pkg.get("Name", "")
+                    key = ("aur", "aur", name)
+                    deduped.setdefault(
+                        key,
                         {
-                            "name": parts[1].strip() if len(parts) > 1 else parts[0].strip(),
-                            "app_id": parts[0].strip(),
-                            "version": parts[2].strip() if len(parts) > 2 else "",
-                            "description": parts[3].strip() if len(parts) > 3 else "",
-                            "source": "flatpak",
-                            "repo": "flatpak",
-                            "installed": self._is_flatpak_installed(parts[0].strip()),
-                            "votes": "",
+                            "name": name,
+                            "version": pkg.get("Version", ""),
+                            "description": pkg.get("Description", "") or "",
+                            "source": "aur",
+                            "repo": "aur",
+                            "installed": name in installed,
+                            "votes": str(pkg.get("NumVotes", 0)),
                             "download_size": "N/A",
                             "download_size_bytes": None,
-                        }
+                        },
                     )
-            return results
-        except subprocess.CalledProcessError:
-            return []
+            return list(deduped.values())
+        except Exception:
+            # Fallback to yay CLI (votes will be unavailable)
+            for query in self.queries:
+                try:
+                    out = subprocess.check_output(
+                        ["yay", "-Ssa", "--aur", query],
+                        text=True,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except subprocess.CalledProcessError:
+                    continue
+
+                for pkg in self._parse_pacman_output(out, "aur"):
+                    key = (pkg.get("source", ""), pkg.get("repo", ""), pkg.get("name", ""))
+                    deduped.setdefault(key, pkg)
+            return list(deduped.values())
+
+    def _search_flatpak(self) -> list:
+        deduped: dict[tuple[str, str], dict] = {}
+        for query in self.queries:
+            try:
+                out = subprocess.check_output(
+                    ["flatpak", "search", "--columns=application,name,version,description", query],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+            except subprocess.CalledProcessError:
+                continue
+
+            for line in out.strip().splitlines()[1:]:  # skip header
+                parts = line.split("\t")
+                if len(parts) < 2:
+                    continue
+                app_id = parts[0].strip()
+                key = ("flatpak", app_id)
+                deduped.setdefault(
+                    key,
+                    {
+                        "name": parts[1].strip() if len(parts) > 1 else app_id,
+                        "app_id": app_id,
+                        "version": parts[2].strip() if len(parts) > 2 else "",
+                        "description": parts[3].strip() if len(parts) > 3 else "",
+                        "source": "flatpak",
+                        "repo": "flatpak",
+                        "installed": self._is_flatpak_installed(app_id),
+                        "votes": "",
+                        "download_size": "N/A",
+                        "download_size_bytes": None,
+                    },
+                )
+        return list(deduped.values())
 
     def _parse_pacman_output(self, out: str, source: str) -> list:
         results = []
