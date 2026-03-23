@@ -15,7 +15,7 @@ UPDATE_PREFS_CONFIGURED_KEY = "updates/preferences_configured"
 AUTO_CHECK_XPAK_UPDATES_KEY = "updates/auto_check_xpak"
 AUTO_CHECK_PACKAGE_UPDATES_KEY = "updates/auto_check_packages"
 CHECK_UPDATES_DAILY_KEY = "updates/check_daily"
-EXCLUDE_SYSTEM_UPDATES_KEY = "updates/exclude_system_updates"
+LEGACY_EXCLUDE_SYSTEM_UPDATES_KEY = "updates/exclude_system_updates"
 INCLUDED_PACMAN_REPOS_KEY = "pacman/include_repos"
 EXCLUDED_PACMAN_REPOS_KEY = "pacman/exclude_repos"
 LAST_XPAK_UPDATE_CHECK_DATE_KEY = "updates/last_xpak_check_date"
@@ -33,28 +33,28 @@ def get_settings() -> QSettings:
     return QSettings(SETTINGS_ORG, SETTINGS_APP)
 
 
-def load_update_preferences() -> tuple[bool, bool, bool, bool, bool]:
+def load_update_preferences() -> tuple[bool, bool, bool, bool]:
     settings = get_settings()
+    if settings.contains(LEGACY_EXCLUDE_SYSTEM_UPDATES_KEY):
+        settings.remove(LEGACY_EXCLUDE_SYSTEM_UPDATES_KEY)
     configured = settings.value(UPDATE_PREFS_CONFIGURED_KEY, False, type=bool)
     auto_check_xpak = settings.value(AUTO_CHECK_XPAK_UPDATES_KEY, True, type=bool)
     auto_check_packages = settings.value(AUTO_CHECK_PACKAGE_UPDATES_KEY, True, type=bool)
     check_daily = settings.value(CHECK_UPDATES_DAILY_KEY, False, type=bool)
-    exclude_system_updates = settings.value(EXCLUDE_SYSTEM_UPDATES_KEY, False, type=bool)
-    return configured, auto_check_xpak, auto_check_packages, check_daily, exclude_system_updates
+    return configured, auto_check_xpak, auto_check_packages, check_daily
 
 
 def save_update_preferences(
     auto_check_xpak: bool,
     auto_check_packages: bool,
     check_daily: bool = False,
-    exclude_system_updates: bool = False,
 ):
     settings = get_settings()
     settings.setValue(UPDATE_PREFS_CONFIGURED_KEY, True)
     settings.setValue(AUTO_CHECK_XPAK_UPDATES_KEY, auto_check_xpak)
     settings.setValue(AUTO_CHECK_PACKAGE_UPDATES_KEY, auto_check_packages)
     settings.setValue(CHECK_UPDATES_DAILY_KEY, check_daily)
-    settings.setValue(EXCLUDE_SYSTEM_UPDATES_KEY, exclude_system_updates)
+    settings.remove(LEGACY_EXCLUDE_SYSTEM_UPDATES_KEY)
     settings.sync()
 
 
@@ -73,7 +73,7 @@ def save_repo_preferences(included_repos: list[str], excluded_repos: list[str]):
 
 
 def should_prompt_for_update_preferences() -> bool:
-    configured, _, _, _, _ = load_update_preferences()
+    configured, _, _, _ = load_update_preferences()
     return not configured
 
 

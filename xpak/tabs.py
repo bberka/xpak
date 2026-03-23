@@ -882,7 +882,6 @@ class UpdatesTab(QWidget):
         self._filtered_updates: list[dict] = []
         self._selected_update: dict | None = None
         self._worker: CommandWorker | None = None
-        self._exclude_system_updates = False
         self._include_pacman_repos: list[str] = []
         self._exclude_pacman_repos: list[str] = []
         self._build_ui()
@@ -993,7 +992,6 @@ class UpdatesTab(QWidget):
             self.filter_input.selectAll()
 
     def reload_preferences(self):
-        _, _, _, _, self._exclude_system_updates = load_update_preferences()
         self._include_pacman_repos, self._exclude_pacman_repos = load_repo_preferences()
         self.set_operation_controls_enabled(True)
 
@@ -1031,7 +1029,6 @@ class UpdatesTab(QWidget):
 
         self.reload_preferences()
         self._checker = UpdateChecker(
-            exclude_system_updates=self._exclude_system_updates,
             include_pacman_repos=self._include_pacman_repos,
             exclude_pacman_repos=self._exclude_pacman_repos,
         )
@@ -1105,7 +1102,7 @@ class UpdatesTab(QWidget):
 
     def update_all(self):
         self.reload_preferences()
-        if self._exclude_system_updates or self._include_pacman_repos or self._exclude_pacman_repos:
+        if self._include_pacman_repos or self._exclude_pacman_repos:
             self._run_filtered_pacman_update()
             return
 
@@ -1148,7 +1145,7 @@ class UpdatesTab(QWidget):
 
     def update_pacman(self):
         self.reload_preferences()
-        if self._exclude_system_updates or self._include_pacman_repos or self._exclude_pacman_repos:
+        if self._include_pacman_repos or self._exclude_pacman_repos:
             self._run_filtered_pacman_update()
             return
         dlg = PasswordDialog(self)
@@ -1180,7 +1177,6 @@ class UpdatesTab(QWidget):
 
     def _run_filtered_pacman_update(self):
         visible_updates, ignored_packages = get_pacman_updates(
-            exclude_core_system_updates=self._exclude_system_updates,
             include_repos=self._include_pacman_repos,
             exclude_repos=self._exclude_pacman_repos,
         )
@@ -1707,10 +1703,6 @@ class SettingsTab(QWidget):
         self.check_daily.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.check_daily)
 
-        self.exclude_system_updates = QCheckBox("Exclude core system package updates (Experimental)")
-        self.exclude_system_updates.setStyleSheet("color: #a9b1d6; font-size: 13px;")
-        layout.addWidget(self.exclude_system_updates)
-
         startup_title = QLabel("Desktop Startup")
         startup_title.setStyleSheet("color: #7aa2f7; font-weight: 700; font-size: 14px; margin-top: 8px;")
         layout.addWidget(startup_title)
@@ -1783,7 +1775,6 @@ class SettingsTab(QWidget):
         self.auto_check_xpak.setEnabled(enabled)
         self.auto_check_packages.setEnabled(enabled)
         self.check_daily.setEnabled(enabled)
-        self.exclude_system_updates.setEnabled(enabled)
         self.launch_on_startup.setEnabled(enabled)
         self.start_to_tray.setEnabled(enabled and self.launch_on_startup.isChecked())
         self.select_all_repos_btn.setEnabled(enabled)
@@ -1795,13 +1786,12 @@ class SettingsTab(QWidget):
             self.start_to_tray.setChecked(False)
 
     def reload_preferences(self):
-        _, auto_check_xpak, auto_check_packages, check_daily, exclude_system_updates = load_update_preferences()
+        _, auto_check_xpak, auto_check_packages, check_daily = load_update_preferences()
         include_repos, _ = load_repo_preferences()
         launch_on_startup, start_to_tray = load_startup_preferences()
         self.auto_check_xpak.setChecked(auto_check_xpak)
         self.auto_check_packages.setChecked(auto_check_packages)
         self.check_daily.setChecked(check_daily)
-        self.exclude_system_updates.setChecked(exclude_system_updates)
         self.launch_on_startup.setChecked(launch_on_startup)
         self.start_to_tray.setChecked(launch_on_startup and start_to_tray)
         self._sync_startup_controls(launch_on_startup)
@@ -1822,7 +1812,6 @@ class SettingsTab(QWidget):
             self.auto_check_xpak.isChecked(),
             self.auto_check_packages.isChecked(),
             self.check_daily.isChecked(),
-            self.exclude_system_updates.isChecked(),
         )
         selected_repos = self._selected_repo_names()
         if self.repo_table.rowCount() > 0 and not selected_repos:

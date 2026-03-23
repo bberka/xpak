@@ -257,14 +257,7 @@ def get_pacman_update_size_info(pkg_name: str, repo: str = "") -> dict[str, str 
     }
 
 
-@lru_cache(maxsize=512)
-def is_core_system_package(pkg_name: str) -> bool:
-    repo = get_pacman_package_repo(pkg_name)
-    return bool(repo) and (repo == "core" or repo.endswith("-core") or "-core-" in repo)
-
-
 def get_pacman_updates(
-    exclude_core_system_updates: bool = False,
     include_repos: list[str] | None = None,
     exclude_repos: list[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
@@ -289,10 +282,7 @@ def get_pacman_updates(
             ignored_packages.append(pkg["name"])
             continue
 
-        if exclude_core_system_updates and is_core_system_package(pkg["name"]):
-            ignored_packages.append(pkg["name"])
-        else:
-            visible_updates.append(pkg)
+        visible_updates.append(pkg)
     return visible_updates, ignored_packages
 
 
@@ -780,19 +770,17 @@ class UpdateChecker(QThread):
 
     def __init__(
         self,
-        exclude_system_updates: bool = False,
         include_pacman_repos: list[str] | None = None,
         exclude_pacman_repos: list[str] | None = None,
     ):
         super().__init__()
-        self.exclude_system_updates = exclude_system_updates
         self.include_pacman_repos = _normalize_repo_filters(include_pacman_repos)
         self.exclude_pacman_repos = _normalize_repo_filters(exclude_pacman_repos)
 
     def run(self):
         results = []
         tasks = []
-        logger.info("UpdateChecker starting (exclude_system_updates=%s)", self.exclude_system_updates)
+        logger.info("UpdateChecker starting")
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             tasks.append(executor.submit(self._check_pacman_updates))
             if shutil.which("flatpak"):
@@ -810,7 +798,6 @@ class UpdateChecker(QThread):
 
     def _check_pacman_updates(self) -> list:
         updates, _ = get_pacman_updates(
-            exclude_core_system_updates=self.exclude_system_updates,
             include_repos=self.include_pacman_repos,
             exclude_repos=self.exclude_pacman_repos,
         )

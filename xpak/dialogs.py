@@ -294,7 +294,6 @@ class UpdatePreferencesDialog(QDialog):
         auto_check_xpak: bool = True,
         auto_check_packages: bool = True,
         check_daily: bool = False,
-        exclude_system_updates: bool = False,
         launch_on_startup: bool = False,
         start_to_tray: bool = False,
     ):
@@ -334,11 +333,6 @@ class UpdatePreferencesDialog(QDialog):
         self.daily_check_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
         layout.addWidget(self.daily_check_check)
 
-        self.exclude_system_updates_check = QCheckBox("Exclude core system package updates")
-        self.exclude_system_updates_check.setChecked(exclude_system_updates)
-        self.exclude_system_updates_check.setStyleSheet("color: #a9b1d6; font-size: 13px;")
-        layout.addWidget(self.exclude_system_updates_check)
-
         launch_title = QLabel("System startup")
         launch_title.setStyleSheet("color: #7aa2f7; font-size: 14px; font-weight: 700; margin-top: 6px;")
         layout.addWidget(launch_title)
@@ -374,12 +368,11 @@ class UpdatePreferencesDialog(QDialog):
         if not enabled:
             self.start_to_tray_check.setChecked(False)
 
-    def selected_preferences(self) -> tuple[bool, bool, bool, bool, bool, bool]:
+    def selected_preferences(self) -> tuple[bool, bool, bool, bool, bool]:
         return (
             self.xpak_updates_check.isChecked(),
             self.package_updates_check.isChecked(),
             self.daily_check_check.isChecked(),
-            self.exclude_system_updates_check.isChecked(),
             self.launch_on_startup_check.isChecked(),
             self.start_to_tray_check.isChecked(),
         )
