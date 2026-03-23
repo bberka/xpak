@@ -8,6 +8,7 @@ import concurrent.futures
 import re
 import itertools
 from functools import lru_cache
+from pathlib import Path
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
@@ -18,6 +19,8 @@ from xpak.logging_service import get_logger
 
 
 logger = get_logger("xpak.workers")
+
+PACMAN_CONF_PATH = Path("/etc/pacman.conf")
 
 
 _SIZE_UNITS = {
@@ -210,6 +213,10 @@ def is_repo_allowed(repo_name: str, include_repos: list[str] | None = None, excl
 
 @lru_cache(maxsize=1)
 def get_available_pacman_repos() -> list[str]:
+    entries = get_pacman_repo_entries()
+    if entries:
+        return [entry["name"] for entry in entries if entry["enabled"]]
+
     try:
         out = subprocess.check_output(
             ["pacman-conf", "--repo-list"],
@@ -220,6 +227,160 @@ def get_available_pacman_repos() -> list[str]:
         return []
 
     return [line.strip().lower() for line in out.splitlines() if line.strip()]
+
+
+@lru_cache(maxsize=1)
+def get_pacman_repo_entries() -> list[dict]:
+    try:
+        lines = PACMAN_CONF_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+    section_pattern = re.compile(r"^\s*(#\s*)?\[([^\]]+)\]\s*$")
+    directive_pattern = re.compile(r"^\s*(#\s*)?(Server|Include)\s*=\s*(.+?)\s*$", re.IGNORECASE)
+
+    entries: list[dict] = []
+    current: dict | None = None
+
+    def finalize(end_line: int) -> None:
+        nonlocal current
+        if not current:
+            return
+        current["end_line"] = end_line
+        entries.append(current)
+        current = None
+
+    for index, line in enumerate(lines):
+        section_match = section_pattern.match(line)
+        if section_match:
+            finalize(index)
+            repo_name = section_match.group(2).strip().lower()
+            if repo_name == "options":
+                continue
+            current = {
+                "name": repo_name,
+                "enabled": not bool(section_match.group(1)),
+                "source_type": "",
+                "source_value": "",
+                "start_line": index,
+                "end_line": index + 1,
+            }
+            continue
+
+        if not current:
+            continue
+
+        directive_match = directive_pattern.match(line)
+        if directive_match and not current["source_value"]:
+            current["source_type"] = directive_match.group(2).capitalize()
+            current["source_value"] = directive_match.group(3).strip()
+
+    finalize(len(lines))
+
+    placeholder_values = {"servername", "includepath", "file:///home/custompkgs"}
+    normalized_entries: list[dict] = []
+    seen: set[str] = set()
+    for entry in entries:
+        name = entry["name"]
+        source_value = str(entry.get("source_value", "")).strip()
+        if not source_value:
+            continue
+        if name == "repo-name":
+            continue
+        if source_value.lower() in placeholder_values:
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        normalized_entries.append(entry)
+    return normalized_entries
+
+
+def refresh_pacman_repo_cache():
+    get_available_pacman_repos.cache_clear()
+    get_pacman_repo_entries.cache_clear()
+
+
+def add_pacman_repo_to_config(repo_name: str, repo_uri: str, password: str) -> tuple[bool, str]:
+    name = str(repo_name or "").strip().lower()
+    uri = str(repo_uri or "").strip()
+    if not name:
+        return False, "Repository name is required"
+    if not uri:
+        return False, "Repository URI is required"
+
+    entries = get_pacman_repo_entries()
+    if any(entry["name"] == name for entry in entries):
+        return False, f"Repository '{name}' already exists in {PACMAN_CONF_PATH}"
+
+    try:
+        content = PACMAN_CONF_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"Could not read {PACMAN_CONF_PATH}: {exc}"
+
+    new_block = f"\n[{name}]\nServer = {uri}\n"
+    updated_content = content.rstrip() + "\n" + new_block
+    success, message = _write_pacman_conf_content(updated_content, password)
+    if success:
+        refresh_pacman_repo_cache()
+    return success, message
+
+
+def remove_pacman_repo_from_config(repo_name: str, password: str) -> tuple[bool, str]:
+    name = str(repo_name or "").strip().lower()
+    if not name:
+        return False, "Repository name is required"
+
+    entries = get_pacman_repo_entries()
+    target = next((entry for entry in entries if entry["name"] == name), None)
+    if not target:
+        return False, f"Repository '{name}' was not found in {PACMAN_CONF_PATH}"
+
+    try:
+        lines = PACMAN_CONF_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return False, f"Could not read {PACMAN_CONF_PATH}: {exc}"
+
+    start_line = int(target["start_line"])
+    end_line = int(target["end_line"])
+    updated_lines = lines[:start_line] + lines[end_line:]
+    updated_content = "\n".join(updated_lines).rstrip() + "\n"
+    success, message = _write_pacman_conf_content(updated_content, password)
+    if success:
+        refresh_pacman_repo_cache()
+    return success, message
+
+
+def _write_pacman_conf_content(content: str, password: str) -> tuple[bool, str]:
+    if not password:
+        return False, "sudo password is required"
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            handle.write(content)
+            temp_path = handle.name
+
+        result = subprocess.run(
+            ["sudo", "-S", "install", "-m", "644", temp_path, str(PACMAN_CONF_PATH)],
+            input=f"{password}\n",
+            text=True,
+            capture_output=True,
+        )
+    except OSError as exc:
+        return False, f"Could not update {PACMAN_CONF_PATH}: {exc}"
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+    if result.returncode != 0:
+        error_output = (result.stderr or result.stdout or "").strip()
+        return False, error_output or f"Could not update {PACMAN_CONF_PATH}"
+
+    return True, f"Updated {PACMAN_CONF_PATH}"
 
 
 @lru_cache(maxsize=2048)

@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+from urllib.parse import urlparse
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -13,6 +14,99 @@ from xpak.settings import get_settings
 
 
 logger = get_logger("xpak.dialogs")
+
+
+class AddPacmanRepoDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Pacman Repository")
+        self.setMinimumWidth(520)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        title = QLabel("Add a pacman repository")
+        title.setStyleSheet("color: #7aa2f7; font-size: 16px; font-weight: 800;")
+        layout.addWidget(title)
+
+        description = QLabel(
+            "This adds a new repository block to /etc/pacman.conf using a repo name "
+            "and a server URI such as https://example.org/$repo/os/$arch."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("color: #565f89; font-size: 12px;")
+        layout.addWidget(description)
+
+        name_label = QLabel("Repository name")
+        name_label.setStyleSheet("color: #a9b1d6; font-size: 12px;")
+        layout.addWidget(name_label)
+
+        self.repo_name_input = QLineEdit()
+        self.repo_name_input.setPlaceholderText("customrepo")
+        layout.addWidget(self.repo_name_input)
+
+        uri_label = QLabel("Server URI")
+        uri_label.setStyleSheet("color: #a9b1d6; font-size: 12px;")
+        layout.addWidget(uri_label)
+
+        self.repo_uri_input = QLineEdit()
+        self.repo_uri_input.setPlaceholderText("https://example.org/$repo/os/$arch")
+        layout.addWidget(self.repo_uri_input)
+
+        self.error_label = QLabel("")
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet("color: #f7768e; font-size: 12px;")
+        layout.addWidget(self.error_label)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add Repository")
+        buttons.accepted.connect(self._submit)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.repo_uri_input.returnPressed.connect(self._submit)
+        self.repo_name_input.setFocus()
+
+    def _submit(self):
+        repo_name = self.repo_name().strip()
+        repo_uri = self.repo_uri().strip()
+
+        if not repo_name:
+            self.error_label.setText("Repository name is required.")
+            self.repo_name_input.setFocus()
+            return
+
+        if not repo_uri:
+            self.error_label.setText("Server URI is required.")
+            self.repo_uri_input.setFocus()
+            return
+
+        if not all(char.isalnum() or char in "._+-@" for char in repo_name):
+            self.error_label.setText("Repository name can only contain letters, numbers, ., _, +, -, and @.")
+            self.repo_name_input.setFocus()
+            return
+
+        parsed = urlparse(repo_uri)
+        if parsed.scheme not in {"http", "https", "ftp", "file"}:
+            self.error_label.setText("Enter a valid URI using http, https, ftp, or file.")
+            self.repo_uri_input.setFocus()
+            return
+
+        if parsed.scheme != "file" and not parsed.netloc:
+            self.error_label.setText("Enter a complete server URI, including the hostname.")
+            self.repo_uri_input.setFocus()
+            return
+
+        self.accept()
+
+    def repo_name(self) -> str:
+        return self.repo_name_input.text().strip().lower()
+
+    def repo_uri(self) -> str:
+        return self.repo_uri_input.text().strip()
 
 
 class PasswordDialog(QDialog):
